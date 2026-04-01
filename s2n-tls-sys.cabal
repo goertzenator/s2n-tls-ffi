@@ -42,13 +42,13 @@ library
     if flag(linked)
         exposed-modules:
             S2nTls.Sys.Linked
-        pkgconfig-depends:
-            s2n >= 1.0
-        -- cpp-options: -DS2N_TLS_SYS_LINKED
+        extra-libraries:
+            s2n
+        cpp-options: -DS2N_TLS_SYS_LINKED
 
     if flag(dynamic)
         exposed-modules:
             S2nTls.Sys.Dynamic
         build-depends:
             unix >= 2.7
-        -- cpp-options: -DS2N_TLS_SYS_DYNAMIC
+        cpp-options: -DS2N_TLS_SYS_DYNAMIC
