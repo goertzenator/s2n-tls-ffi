@@ -1,0 +1,54 @@
+cabal-version:      3.0
+name:               s2n-tls-sys
+version:            0.1.0.0
+synopsis:           Low-level FFI bindings to the s2n-tls library
+description:
+    This package provides low-level FFI bindings to the s2n-tls library.
+    It follows the Rust convention of "sys" packages that provide raw
+    bindings which higher-level packages can build upon.
+    .
+    Use the @linked@ flag to get bindings via linked symbols, or the
+    @dynamic@ flag to load the library at runtime via dlopen.
+
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             Daniel Goertzen
+maintainer:         daniel.goertzen@gmail.com
+category:           Cryptography, FFI
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+
+flag linked
+    description: Enable linked symbol bindings (getLinkedTlsSys)
+    default:     True
+    manual:      True
+
+flag dynamic
+    description: Enable dynamic loading bindings (withDynamicTlsSys)
+    default:     False
+    manual:      True
+
+library
+    exposed-modules:
+        S2nTls.Sys
+        S2nTls.Sys.Types
+
+    build-depends:
+        base >= 4.14 && < 5
+
+    hs-source-dirs:   src
+    default-language: GHC2021
+
+    if flag(linked)
+        exposed-modules:
+            S2nTls.Sys.Linked
+        pkgconfig-depends:
+            s2n >= 1.0
+        -- cpp-options: -DS2N_TLS_SYS_LINKED
+
+    if flag(dynamic)
+        exposed-modules:
+            S2nTls.Sys.Dynamic
+        build-depends:
+            unix >= 2.7
+        -- cpp-options: -DS2N_TLS_SYS_DYNAMIC
