@@ -1915,9 +1915,11 @@ ssize_t s2n_wrap_send(
     const S2nErrorFuncs *err_funcs, S2nErrorInfo *err_out)
 {
     ssize_t result = fn(conn, buf, size, blocked);
+    int err = *(err_funcs->errno_location)();
+    bool is_blocked = err_funcs->error_get_type(err) == 3; // S2N_ERR_T_BLOCKED==3
     if (result < 0)
     {
-        S2N_FILL_ERROR(err_funcs, err_out);
+        S2N_FILL_ERROR_MAYBE(err_funcs, err_out, !is_blocked);
     }
     return result;
 }
@@ -1928,9 +1930,11 @@ ssize_t s2n_wrap_recv(
     const S2nErrorFuncs *err_funcs, S2nErrorInfo *err_out)
 {
     ssize_t result = fn(conn, buf, size, blocked);
+    int err = *(err_funcs->errno_location)();
+    bool is_blocked = err_funcs->error_get_type(err) == 3; // S2N_ERR_T_BLOCKED==3
     if (result < 0)
     {
-        S2N_FILL_ERROR(err_funcs, err_out);
+        S2N_FILL_ERROR_MAYBE(err_funcs, err_out, !is_blocked);
     }
     return result;
 }

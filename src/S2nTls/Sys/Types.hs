@@ -211,18 +211,21 @@ Loaded first during initialization - fatal if any are missing.
 data S2nErrorFuncs = S2nErrorFuncs
   { errnoLocation :: !(FunPtr (IO (Ptr CInt)))
   , strerrorDebug :: !(FunPtr (CInt -> CString -> IO CString))
+  , errorGetType :: !(FunPtr (CInt -> IO S2nErrorType))
   }
 
 instance Storable S2nErrorFuncs where
-  sizeOf _ = 2 * sizeOf (undefined :: FunPtr ())
+  sizeOf _ = 3 * sizeOf (undefined :: FunPtr ())
   alignment _ = alignment (undefined :: FunPtr ())
   peek ptr = do
     a <- peekByteOff ptr 0
     b <- peekByteOff ptr (sizeOf (undefined :: FunPtr ()))
-    pure $ S2nErrorFuncs a b
-  poke ptr (S2nErrorFuncs a b) = do
+    c <- peekByteOff ptr (2 * sizeOf (undefined :: FunPtr ()))
+    pure $ S2nErrorFuncs a b c
+  poke ptr (S2nErrorFuncs a b c) = do
     pokeByteOff ptr 0 a
     pokeByteOff ptr (sizeOf (undefined :: FunPtr ())) b
+    pokeByteOff ptr (2 * sizeOf (undefined :: FunPtr ())) c
 
 -- | Size of the debug string buffer in S2nError (must match C S2N_ERROR_DEBUG_STRING_SIZE)
 s2nErrorDebugStringSize :: Int

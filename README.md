@@ -45,6 +45,8 @@ To solve this, most s2n functions are called through thin C wrappers that:
 
 This ensures error information is captured in the same C stack frame before control returns to Haskell. The `S2nTlsSys` record exposes these wrapped functions, which return `Either S2nError result` for functions that can fail.
 
+Note that `s2n_send` and `s2n_recv` have special behavior: if the error was `S2N_ERR_T_BLOCKED`, debug info is not captured because this is a frequent, expected case that doesn't need debug overhead.
+
 ### Direct Error Functions
 
 The `s2n_strerror` and `s2n_strerror_name` functions are **not** subject to thread-local storage limitations - they take an error code as input and return static strings. These can be called directly without wrappers if you need to format error messages yourself.

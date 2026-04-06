@@ -155,7 +155,8 @@ loadErrorFuncs :: DL -> IO S2nErrorFuncs
 loadErrorFuncs dl = do
     el <- dlsym dl "s2n_errno_location"
     sd <- dlsym dl "s2n_strerror_debug"
-    pure $ S2nErrorFuncs el sd
+    et <- dlsym dl "s2n_error_get_type"
+    pure $ S2nErrorFuncs el sd et
 
 -- | Create a closure that throws MissingSymbol
 throwMissing :: String -> IO a

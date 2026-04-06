@@ -11,6 +11,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <string.h>
 #include <sys/types.h>
 
@@ -26,6 +27,7 @@ typedef struct
 {
     int *(*errno_location)(void);
     const char *(*strerror_debug)(int error, const char *lang);
+    int (*error_get_type)(int error);
 } S2nErrorFuncs;
 
 /*
@@ -44,12 +46,12 @@ typedef struct
  * Helper macro to populate error info on failure.
  * Copies the debug string into the owned buffer.
  */
-#define S2N_FILL_ERROR(err_funcs, err_out)                                           \
+#define S2N_FILL_ERROR_MAYBE(err_funcs, err_out, do_dbg)                             \
     do                                                                               \
     {                                                                                \
         (err_out)->error_code = *(err_funcs)->errno_location();                      \
         const char *_dbg = (err_funcs)->strerror_debug((err_out)->error_code, "EN"); \
-        if (_dbg)                                                                    \
+        if (_dbg && (do_dbg))                                                        \
         {                                                                            \
             strncpy((err_out)->debug_string, _dbg, S2N_ERROR_DEBUG_STRING_SIZE - 1); \
             (err_out)->debug_string[S2N_ERROR_DEBUG_STRING_SIZE - 1] = '\0';         \
@@ -59,6 +61,12 @@ typedef struct
             (err_out)->debug_string[0] = '\0';                                       \
         }                                                                            \
     } while (0)
+
+/*
+ * Helper macro to populate error info on failure.
+ * Copies the debug string into the owned buffer.
+ */
+#define S2N_FILL_ERROR(err_funcs, err_out) S2N_FILL_ERROR_MAYBE(err_funcs, err_out, true)
 
 /* ============================================================================
  * Wrapper Function Declarations
