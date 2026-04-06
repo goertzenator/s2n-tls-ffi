@@ -1,18 +1,20 @@
 {-# LANGUAGE RecordWildCards #-}
 
--- {-# LANGUAGE ForeignFunctionInterface #-}
-
 {- |
 Module      : S2nTls.Sys.Dynamic
 Description : Dynamic loading bindings to s2n-tls
 License     : BSD-3-Clause
 
 This module provides s2n-tls bindings via dynamic loading (dlopen).
-It is only available when the package is built with the @dynamic@ flag.
 
 Use 'withDynamicTlsSys' to load the s2n-tls library at runtime and
 obtain a 'S2nTlsSys' record populated with dynamically resolved
-function pointers.
+function pointers. Symbol loading is forgiving - missing symbols
+will throw 'MissingSymbol' when called rather than failing at load time.
+
+The error functions (s2n_errno_location, s2n_strerror_debug)
+are loaded first and their absence is fatal, as they're required for
+meaningful error reporting.
 -}
 module S2nTls.Sys.Dynamic (
     withDynamicTlsSys,
@@ -20,10 +22,14 @@ module S2nTls.Sys.Dynamic (
 ) where
 
 import Control.Exception (Exception, bracket, throwIO)
+import Control.Monad (when)
+import Data.IORef (IORef, modifyIORef', newIORef, readIORef)
 import Data.Word (Word16, Word32, Word64, Word8)
-import Foreign.C.String (CString)
-import Foreign.C.Types (CInt (..), CLong (..), CSize (..))
-import Foreign.Ptr (FunPtr, Ptr, castFunPtrToPtr, nullFunPtr)
+import Foreign.C.String (CString, peekCString)
+import Foreign.C.Types (CBool (..), CInt (..), CLong (..), CSize (..))
+import Foreign.Marshal.Alloc (alloca, free, malloc)
+import Foreign.Ptr (FunPtr, Ptr, castFunPtrToPtr, castPtrToFunPtr, nullFunPtr, nullPtr)
+import Foreign.Storable (peek, poke)
 import System.Posix.DynamicLinker (
     DL,
     RTLDFlags (RTLD_LAZY, RTLD_LOCAL),
@@ -37,691 +43,834 @@ import S2nTls.Sys.Types
 
 -- | Errors that can occur when dynamically loading the s2n-tls library.
 data DynamicLoadError
-    = LibraryNotFound FilePath
-    | SymbolNotFound String
+    = LibraryNotFound FilePath String
+    | RequiredSymbolNotFound String
     deriving (Show, Eq)
 
 instance Exception DynamicLoadError
+
+class TransformError a where
+    transformError :: (Ptr S2nError -> IO a) -> IO (Either S2nError a)
+
+instance TransformError CInt where
+    transformError action = alloca $ \errInfoPtr -> do
+        res <- action errInfoPtr
+        if res < 0
+            then Left <$> peek errInfoPtr
+            else pure $ Right res
+
+instance TransformError CSsize where
+    transformError action = alloca $ \errInfoPtr -> do
+        res <- action errInfoPtr
+        if res < 0
+            then Left <$> peek errInfoPtr
+            else pure $ Right res
+
+instance TransformError (Ptr a) where
+    transformError action = alloca $ \errInfoPtr -> do
+        res <- action errInfoPtr
+        if res == nullPtr
+            then Left <$> peek errInfoPtr
+            else pure $ Right res
+
+-- CSize is unsigned, so functions returning CSize typically can't fail
+-- They always return a valid size value
+instance TransformError CSize where
+    transformError action = alloca $ \errInfoPtr -> do
+        res <- action errInfoPtr
+        pure $ Right res
+
+fmap2 :: (Functor f, Functor g) => (a -> b) -> (f (g a) -> f (g b))
+fmap2 = fmap . fmap
+
+fmap3 :: (Functor f, Functor g, Functor h) => (a -> b) -> (f (g (h a)) -> f (g (h b)))
+fmap3 = fmap . fmap . fmap
+
+fmap4 :: (Functor f, Functor g, Functor h, Functor i) => (a -> b) -> (f (g (h (i a))) -> f (g (h (i b))))
+fmap4 = fmap . fmap . fmap . fmap
+
+fmap5 :: (Functor f, Functor g, Functor h, Functor i, Functor j) => (a -> b) -> (f (g (h (i (j a)))) -> f (g (h (i (j b)))))
+fmap5 = fmap . fmap . fmap . fmap . fmap
+
+fmap6 :: (Functor f, Functor g, Functor h, Functor i, Functor j, Functor k) => (a -> b) -> (f (g (h (i (j (k a))))) -> f (g (h (i (j (k b))))))
+fmap6 = fmap . fmap . fmap . fmap . fmap . fmap
+
+fmap7 :: (Functor f, Functor g, Functor h, Functor i, Functor j, Functor k, Functor l) => (a -> b) -> (f (g (h (i (j (k (l a)))))) -> f (g (h (i (j (k (l b)))))))
+fmap7 = fmap . fmap . fmap . fmap . fmap . fmap . fmap
+
+const2 :: a -> b -> c -> a
+const2 x _ _ = x
+
+const3 :: a -> b -> c -> d -> a
+const3 x _ _ _ = x
+
+const4 :: a -> b -> c -> d -> e -> a
+const4 x _ _ _ _ = x
+
+const5 :: a -> b -> c -> d -> e -> f -> a
+const5 x _ _ _ _ _ = x
+
+const6 :: a -> b -> c -> d -> e -> f -> g -> a
+const6 x _ _ _ _ _ _ = x
+
+const7 :: a -> b -> c -> d -> e -> f -> g -> h -> a
+const7 x _ _ _ _ _ _ _ = x
 
 {- | Load the s2n-tls library dynamically and provide a 'S2nTlsSys' record
 to the given callback. The library is automatically unloaded when the
 callback returns (or throws an exception).
 
+Pass an empty string to load symbols from the current executable
+(equivalent to dlopen(NULL)).
+
 @
 withDynamicTlsSys "libs2n.so" $ \\sys -> do
     -- use sys here
+    print (missingSymbols sys)  -- see which symbols weren't found
 @
 -}
 withDynamicTlsSys ::
-    -- | Path to the s2n-tls shared library (e.g., "libs2n.so")
+    -- | Path to the s2n-tls shared library (e.g., "libs2n.so"), or "" for executable
     FilePath ->
     -- | Callback that receives the populated 'S2nTlsSys' record
     (S2nTlsSys -> IO a) ->
     IO a
 withDynamicTlsSys libPath action =
-    bracket (dlopen libPath [RTLD_LAZY, RTLD_LOCAL]) dlclose $ \dl -> do
-        sys <- loadSymbols dl
-        action sys
+    bracket (openLib libPath) dlclose $ \dl ->
+        bracket (malloc :: IO (Ptr S2nErrorFuncs)) free $ \errFuncsPtr -> do
+            -- Load error functions first (fatal if missing)
+            errFuncs <- loadErrorFuncs dl
+            poke errFuncsPtr errFuncs
 
--- | Helper to load a symbol and throw if not found.
-loadSym :: DL -> String -> IO (FunPtr a)
-loadSym dl name = do
-    ptr <- dlsym dl name
-    if castFunPtrToPtr ptr == castFunPtrToPtr nullFunPtr
-        then throwIO (SymbolNotFound name)
-        else pure ptr
+            -- Load all other symbols (forgiving)
+            (sys, missing) <- loadSymbols dl errFuncsPtr
+            action sys{missingSymbols = missing}
 
--- | Load all s2n-tls symbols from the given dynamic library handle.
-loadSymbols :: DL -> IO S2nTlsSys
-loadSymbols dl = do
+-- | Open the library, handling empty path for dlopen(NULL)
+openLib :: FilePath -> IO DL
+openLib path = dlopen path [RTLD_LAZY, RTLD_LOCAL]
+
+-- | Load the error functions (required for meaningful error reporting)
+loadErrorFuncs :: DL -> IO S2nErrorFuncs
+loadErrorFuncs dl = do
+    el <- dlsym dl "s2n_errno_location"
+    sd <- dlsym dl "s2n_strerror_debug"
+    pure $ S2nErrorFuncs el sd
+
+-- | Create a closure that throws MissingSymbol
+throwMissing :: String -> IO a
+throwMissing name = throwIO (MissingSymbol name)
+
+-- | Indicate where a symbol is required vs optional
+data MethodRequirement = Mandatory | Optional
+    deriving (Show, Eq)
+
+{- | Load all s2n-tls symbols from the given dynamic library handle.
+Returns the S2nTlsSys record and list of missing symbol names.
+-}
+loadSymbols :: DL -> Ptr S2nErrorFuncs -> IO (S2nTlsSys, [String])
+loadSymbols dl errFuncsPtr = do
+    missingRef <- newIORef []
+
+    let
+        -- Helper to load a symbol with forgiving behavior
+        load :: String -> MethodRequirement -> IO (FunPtr a)
+        load name req = do
+            ptr <- dlsym dl name
+            when (ptr == nullFunPtr) $ do
+                modifyIORef' missingRef (name :)
+            if ptr == nullFunPtr && req == Mandatory
+                then do
+                    throwMissing name
+                else do
+                    pure ptr
+
+        mkMethod0Direct :: String -> MethodRequirement -> (FunPtr x -> IO r) -> IO (IO r)
+        mkMethod0Direct name req action = do
+            ptr <- load name req
+            pure $
+                if ptr == nullFunPtr
+                    then throwMissing name
+                    else action ptr
+
+        mkMethod1Direct :: String -> MethodRequirement -> (FunPtr x -> a -> IO r) -> IO (a -> IO r)
+        mkMethod1Direct name req action = do
+            ptr <- load name req
+            pure $
+                if ptr == nullFunPtr
+                    then const (throwMissing name)
+                    else action ptr
+
+        mkMethod2Direct :: String -> MethodRequirement -> (FunPtr x -> a -> b -> IO r) -> IO (a -> b -> IO r)
+        mkMethod2Direct name req action = do
+            ptr <- load name req
+            pure $
+                if ptr == nullFunPtr
+                    then const2 (throwMissing name)
+                    else action ptr
+
+        mkMethod3Direct :: String -> MethodRequirement -> (FunPtr x -> a -> b -> c -> IO r) -> IO (a -> b -> c -> IO r)
+        mkMethod3Direct name req action = do
+            ptr <- load name req
+            pure $
+                if ptr == nullFunPtr
+                    then const3 (throwMissing name)
+                    else action ptr
+
+        -- Note: C wrappers have signature: FunPtr -> args... -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO r
+        mkMethod0 :: (TransformError r) => String -> MethodRequirement -> (FunPtr () -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO r) -> IO (IO (Either S2nError r))
+        mkMethod0 name req action = do
+            ptr <- load name req
+            pure $
+                if ptr == nullFunPtr
+                    then throwMissing name
+                    else transformError (action ptr errFuncsPtr)
+
+        mkMethod1 :: (TransformError r) => String -> MethodRequirement -> (FunPtr () -> a -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO r) -> IO (a -> IO (Either S2nError r))
+        mkMethod1 name req action = do
+            ptr <- load name req
+            pure $
+                if ptr == nullFunPtr
+                    then const (throwMissing name)
+                    else \a -> transformError (action ptr a errFuncsPtr)
+
+        mkMethod2 :: (TransformError r) => String -> MethodRequirement -> (FunPtr () -> a -> b -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO r) -> IO (a -> b -> IO (Either S2nError r))
+        mkMethod2 name req action = do
+            ptr <- load name req
+            pure $
+                if ptr == nullFunPtr
+                    then const2 (throwMissing name)
+                    else \a b -> transformError (action ptr a b errFuncsPtr)
+
+        mkMethod3 :: (TransformError r) => String -> MethodRequirement -> (FunPtr () -> a -> b -> c -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO r) -> IO (a -> b -> c -> IO (Either S2nError r))
+        mkMethod3 name req action = do
+            ptr <- load name req
+            pure $
+                if ptr == nullFunPtr
+                    then const3 (throwMissing name)
+                    else \a b c -> transformError (action ptr a b c errFuncsPtr)
+
+        mkMethod4 :: (TransformError r) => String -> MethodRequirement -> (FunPtr () -> a -> b -> c -> d -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO r) -> IO (a -> b -> c -> d -> IO (Either S2nError r))
+        mkMethod4 name req action = do
+            ptr <- load name req
+            pure $
+                if ptr == nullFunPtr
+                    then const4 (throwMissing name)
+                    else \a b c d -> transformError (action ptr a b c d errFuncsPtr)
+
+        mkMethod5 :: (TransformError r) => String -> MethodRequirement -> (FunPtr () -> a -> b -> c -> d -> e -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO r) -> IO (a -> b -> c -> d -> e -> IO (Either S2nError r))
+        mkMethod5 name req action = do
+            ptr <- load name req
+            pure $
+                if ptr == nullFunPtr
+                    then const5 (throwMissing name)
+                    else \a b c d e -> transformError (action ptr a b c d e errFuncsPtr)
+
+        mkMethod6 :: (TransformError r) => String -> MethodRequirement -> (FunPtr () -> a -> b -> c -> d -> e -> f -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO r) -> IO (a -> b -> c -> d -> e -> f -> IO (Either S2nError r))
+        mkMethod6 name req action = do
+            ptr <- load name req
+            pure $
+                if ptr == nullFunPtr
+                    then const6 (throwMissing name)
+                    else \a b c d e f -> transformError (action ptr a b c d e f errFuncsPtr)
+
+        mkMethod7 :: (TransformError r) => String -> MethodRequirement -> (FunPtr () -> a -> b -> c -> d -> e -> f -> g -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO r) -> IO (a -> b -> c -> d -> e -> f -> g -> IO (Either S2nError r))
+        mkMethod7 name req action = do
+            ptr <- load name req
+            pure $
+                if ptr == nullFunPtr
+                    then const7 (throwMissing name)
+                    else \a b c d e f g -> transformError (action ptr a b c d e f g errFuncsPtr)
+
     -- Initialization & Cleanup
-    s2n_init <- mk_s2n_init <$> loadSym dl "s2n_init"
-    s2n_cleanup <- mk_s2n_cleanup <$> loadSym dl "s2n_cleanup"
-    s2n_cleanup_final <- mk_s2n_cleanup_final <$> loadSym dl "s2n_cleanup_final"
-    s2n_crypto_disable_init <- mk_s2n_crypto_disable_init <$> loadSym dl "s2n_crypto_disable_init"
-    s2n_disable_atexit <- mk_s2n_disable_atexit <$> loadSym dl "s2n_disable_atexit"
-    s2n_get_openssl_version <- mk_s2n_get_openssl_version <$> loadSym dl "s2n_get_openssl_version"
-    s2n_get_fips_mode <- mk_s2n_get_fips_mode <$> loadSym dl "s2n_get_fips_mode"
+    s2n_init <- mkMethod0 "s2n_init" Optional c_wrap_init
+    s2n_cleanup <- mkMethod0 "s2n_cleanup" Optional c_wrap_cleanup
+    s2n_cleanup_final <- mkMethod0 "s2n_cleanup_final" Optional c_wrap_cleanup_final
+    s2n_crypto_disable_init <- mkMethod0 "s2n_crypto_disable_init" Optional c_wrap_crypto_disable_init
+    s2n_disable_atexit <- mkMethod0 "s2n_disable_atexit" Optional c_wrap_disable_atexit
+    s2n_get_openssl_version <- mkMethod0Direct "s2n_get_openssl_version" Mandatory mk_s2n_get_openssl_version
+    s2n_get_fips_mode <- mkMethod1 "s2n_get_fips_mode" Optional c_wrap_get_fips_mode
 
-    -- Error Handling
-    s2n_errno_location <- mk_s2n_errno_location <$> loadSym dl "s2n_errno_location"
-    s2n_error_get_type <- mk_s2n_error_get_type <$> loadSym dl "s2n_error_get_type"
-    s2n_strerror <- mk_s2n_strerror <$> loadSym dl "s2n_strerror"
-    s2n_strerror_debug <- mk_s2n_strerror_debug <$> loadSym dl "s2n_strerror_debug"
-    s2n_strerror_name <- mk_s2n_strerror_name <$> loadSym dl "s2n_strerror_name"
-    s2n_strerror_source <- mk_s2n_strerror_source <$> loadSym dl "s2n_strerror_source"
+    -- Error Handling (load function pointers and wrap directly)
+    s2n_errno_location <- mkMethod0Direct "s2n_errno_location" Mandatory mk_s2n_errno_location
+    s2n_strerror <- mkMethod2Direct "s2n_strerror" Mandatory mk_s2n_strerror
+    s2n_strerror_debug <- mkMethod2Direct "s2n_strerror_debug" Mandatory mk_s2n_strerror_debug
+    s2n_strerror_source <- mkMethod1Direct "s2n_strerror_source" Mandatory mk_s2n_strerror_source
+    s2n_error_get_type <- mkMethod1Direct "s2n_error_get_type" Mandatory mk_s2n_error_get_type
+    s2n_strerror_name <- mkMethod1Direct "s2n_strerror_name" Mandatory mk_s2n_strerror_name
 
     -- Stack Traces
-    s2n_stack_traces_enabled <- mk_s2n_stack_traces_enabled <$> loadSym dl "s2n_stack_traces_enabled"
-    s2n_stack_traces_enabled_set <- mk_s2n_stack_traces_enabled_set <$> loadSym dl "s2n_stack_traces_enabled_set"
-    s2n_calculate_stacktrace <- mk_s2n_calculate_stacktrace <$> loadSym dl "s2n_calculate_stacktrace"
-    s2n_free_stacktrace <- mk_s2n_free_stacktrace <$> loadSym dl "s2n_free_stacktrace"
-    s2n_get_stacktrace <- mk_s2n_get_stacktrace <$> loadSym dl "s2n_get_stacktrace"
+    stackTracesEnabledPtr <- load "s2n_stack_traces_enabled" Optional
+    s2n_stack_traces_enabled <- mkMethod0Direct "s2n_stack_traces_enabled" Optional mk_s2n_stack_traces_enabled
+    s2n_stack_traces_enabled_set <- mkMethod1 "s2n_stack_traces_enabled_set" Optional c_wrap_stack_traces_enabled_set
+    s2n_calculate_stacktrace <- mkMethod0 "s2n_calculate_stacktrace" Optional c_wrap_calculate_stacktrace
+    s2n_free_stacktrace <- mkMethod0 "s2n_free_stacktrace" Optional c_wrap_free_stacktrace
+    s2n_get_stacktrace <- mkMethod1 "s2n_get_stacktrace" Optional c_wrap_get_stacktrace
 
     -- Config Management
-    s2n_config_new <- mk_s2n_config_new <$> loadSym dl "s2n_config_new"
-    s2n_config_new_minimal <- mk_s2n_config_new_minimal <$> loadSym dl "s2n_config_new_minimal"
-    s2n_config_free <- mk_s2n_config_free <$> loadSym dl "s2n_config_free"
-    s2n_config_free_dhparams <- mk_s2n_config_free_dhparams <$> loadSym dl "s2n_config_free_dhparams"
-    s2n_config_free_cert_chain_and_key <- mk_s2n_config_free_cert_chain_and_key <$> loadSym dl "s2n_config_free_cert_chain_and_key"
-    s2n_config_set_wall_clock <- mk_s2n_config_set_wall_clock <$> loadSym dl "s2n_config_set_wall_clock"
-    s2n_config_set_monotonic_clock <- mk_s2n_config_set_monotonic_clock <$> loadSym dl "s2n_config_set_monotonic_clock"
-
+    s2n_config_new <- mkMethod0 "s2n_config_new" Optional c_wrap_config_new
+    s2n_config_new_minimal <- mkMethod0 "s2n_config_new_minimal" Optional c_wrap_config_new_minimal
+    s2n_config_free <- mkMethod1 "s2n_config_free" Optional c_wrap_config_free
+    s2n_config_free_dhparams <- mkMethod1 "s2n_config_free_dhparams" Optional c_wrap_config_free_dhparams
+    s2n_config_free_cert_chain_and_key <- mkMethod1 "s2n_config_free_cert_chain_and_key" Optional c_wrap_config_free_cert_chain_and_key
+    s2n_config_set_wall_clock <- mkMethod3 "s2n_config_set_wall_clock" Optional c_wrap_config_set_wall_clock
+    s2n_config_set_monotonic_clock <- mkMethod3 "s2n_config_set_monotonic_clock" Optional c_wrap_config_set_monotonic_clock
     -- Cache Callbacks
-    s2n_config_set_cache_store_callback <- mk_s2n_config_set_cache_store_callback <$> loadSym dl "s2n_config_set_cache_store_callback"
-    s2n_config_set_cache_retrieve_callback <- mk_s2n_config_set_cache_retrieve_callback <$> loadSym dl "s2n_config_set_cache_retrieve_callback"
-    s2n_config_set_cache_delete_callback <- mk_s2n_config_set_cache_delete_callback <$> loadSym dl "s2n_config_set_cache_delete_callback"
-
+    s2n_config_set_cache_store_callback <- mkMethod3 "s2n_config_set_cache_store_callback" Optional c_wrap_config_set_cache_store_callback
+    s2n_config_set_cache_retrieve_callback <- mkMethod3 "s2n_config_set_cache_retrieve_callback" Optional c_wrap_config_set_cache_retrieve_callback
+    s2n_config_set_cache_delete_callback <- mkMethod3 "s2n_config_set_cache_delete_callback" Optional c_wrap_config_set_cache_delete_callback
     -- Memory & Random Callbacks
-    s2n_mem_set_callbacks <- mk_s2n_mem_set_callbacks <$> loadSym dl "s2n_mem_set_callbacks"
-    s2n_rand_set_callbacks <- mk_s2n_rand_set_callbacks <$> loadSym dl "s2n_rand_set_callbacks"
+    s2n_mem_set_callbacks <- mkMethod4 "s2n_mem_set_callbacks" Optional c_wrap_mem_set_callbacks
+    s2n_rand_set_callbacks <- mkMethod4 "s2n_rand_set_callbacks" Optional c_wrap_rand_set_callbacks
 
     -- Certificate Chain Management
-    s2n_cert_chain_and_key_new <- mk_s2n_cert_chain_and_key_new <$> loadSym dl "s2n_cert_chain_and_key_new"
-    s2n_cert_chain_and_key_load_pem <- mk_s2n_cert_chain_and_key_load_pem <$> loadSym dl "s2n_cert_chain_and_key_load_pem"
-    s2n_cert_chain_and_key_load_pem_bytes <- mk_s2n_cert_chain_and_key_load_pem_bytes <$> loadSym dl "s2n_cert_chain_and_key_load_pem_bytes"
-    s2n_cert_chain_and_key_load_public_pem_bytes <- mk_s2n_cert_chain_and_key_load_public_pem_bytes <$> loadSym dl "s2n_cert_chain_and_key_load_public_pem_bytes"
-    s2n_cert_chain_and_key_free <- mk_s2n_cert_chain_and_key_free <$> loadSym dl "s2n_cert_chain_and_key_free"
-    s2n_cert_chain_and_key_set_ctx <- mk_s2n_cert_chain_and_key_set_ctx <$> loadSym dl "s2n_cert_chain_and_key_set_ctx"
-    s2n_cert_chain_and_key_get_ctx <- mk_s2n_cert_chain_and_key_get_ctx <$> loadSym dl "s2n_cert_chain_and_key_get_ctx"
-    s2n_cert_chain_and_key_get_private_key <- mk_s2n_cert_chain_and_key_get_private_key <$> loadSym dl "s2n_cert_chain_and_key_get_private_key"
-    s2n_cert_chain_and_key_set_ocsp_data <- mk_s2n_cert_chain_and_key_set_ocsp_data <$> loadSym dl "s2n_cert_chain_and_key_set_ocsp_data"
-    s2n_cert_chain_and_key_set_sct_list <- mk_s2n_cert_chain_and_key_set_sct_list <$> loadSym dl "s2n_cert_chain_and_key_set_sct_list"
-    s2n_config_set_cert_tiebreak_callback <- mk_s2n_config_set_cert_tiebreak_callback <$> loadSym dl "s2n_config_set_cert_tiebreak_callback"
-    s2n_config_add_cert_chain_and_key <- mk_s2n_config_add_cert_chain_and_key <$> loadSym dl "s2n_config_add_cert_chain_and_key"
-    s2n_config_add_cert_chain_and_key_to_store <- mk_s2n_config_add_cert_chain_and_key_to_store <$> loadSym dl "s2n_config_add_cert_chain_and_key_to_store"
-    s2n_config_set_cert_chain_and_key_defaults <- mk_s2n_config_set_cert_chain_and_key_defaults <$> loadSym dl "s2n_config_set_cert_chain_and_key_defaults"
+    s2n_cert_chain_and_key_new <- mkMethod0 "s2n_cert_chain_and_key_new" Optional c_wrap_cert_chain_and_key_new
+    s2n_cert_chain_and_key_load_pem <- mkMethod3 "s2n_cert_chain_and_key_load_pem" Optional c_wrap_cert_chain_and_key_load_pem
+    s2n_cert_chain_and_key_load_pem_bytes <- mkMethod5 "s2n_cert_chain_and_key_load_pem_bytes" Optional c_wrap_cert_chain_and_key_load_pem_bytes
+    s2n_cert_chain_and_key_load_public_pem_bytes <- mkMethod3 "s2n_cert_chain_and_key_load_public_pem_bytes" Optional c_wrap_cert_chain_and_key_load_public_pem_bytes
+    s2n_cert_chain_and_key_free <- mkMethod1 "s2n_cert_chain_and_key_free" Optional c_wrap_cert_chain_and_key_free
+    s2n_cert_chain_and_key_set_ctx <- mkMethod2 "s2n_cert_chain_and_key_set_ctx" Optional c_wrap_cert_chain_and_key_set_ctx
+    s2n_cert_chain_and_key_get_ctx <- mkMethod1Direct "s2n_cert_chain_and_key_get_ctx" Mandatory mk_s2n_cert_chain_and_key_get_ctx
+    s2n_cert_chain_and_key_get_private_key <- mkMethod1 "s2n_cert_chain_and_key_get_private_key" Optional c_wrap_cert_chain_and_key_get_private_key
+    s2n_cert_chain_and_key_set_ocsp_data <- mkMethod3 "s2n_cert_chain_and_key_set_ocsp_data" Optional c_wrap_cert_chain_and_key_set_ocsp_data
+    s2n_cert_chain_and_key_set_sct_list <- mkMethod3 "s2n_cert_chain_and_key_set_sct_list" Optional c_wrap_cert_chain_and_key_set_sct_list
+    s2n_config_set_cert_tiebreak_callback <- mkMethod2 "s2n_config_set_cert_tiebreak_callback" Optional c_wrap_config_set_cert_tiebreak_callback
+    s2n_config_add_cert_chain_and_key <- mkMethod3 "s2n_config_add_cert_chain_and_key" Optional c_wrap_config_add_cert_chain_and_key
+    s2n_config_add_cert_chain_and_key_to_store <- mkMethod2 "s2n_config_add_cert_chain_and_key_to_store" Optional c_wrap_config_add_cert_chain_and_key_to_store
+    s2n_config_set_cert_chain_and_key_defaults <- mkMethod3 "s2n_config_set_cert_chain_and_key_defaults" Optional c_wrap_config_set_cert_chain_and_key_defaults
 
     -- Trust Store
-    s2n_config_set_verification_ca_location <- mk_s2n_config_set_verification_ca_location <$> loadSym dl "s2n_config_set_verification_ca_location"
-    s2n_config_add_pem_to_trust_store <- mk_s2n_config_add_pem_to_trust_store <$> loadSym dl "s2n_config_add_pem_to_trust_store"
-    s2n_config_wipe_trust_store <- mk_s2n_config_wipe_trust_store <$> loadSym dl "s2n_config_wipe_trust_store"
-    s2n_config_load_system_certs <- mk_s2n_config_load_system_certs <$> loadSym dl "s2n_config_load_system_certs"
-    s2n_config_set_cert_authorities_from_trust_store <- mk_s2n_config_set_cert_authorities_from_trust_store <$> loadSym dl "s2n_config_set_cert_authorities_from_trust_store"
+    s2n_config_set_verification_ca_location <- mkMethod3 "s2n_config_set_verification_ca_location" Optional c_wrap_config_set_verification_ca_location
+    s2n_config_add_pem_to_trust_store <- mkMethod2 "s2n_config_add_pem_to_trust_store" Optional c_wrap_config_add_pem_to_trust_store
+    s2n_config_wipe_trust_store <- mkMethod1 "s2n_config_wipe_trust_store" Optional c_wrap_config_wipe_trust_store
+    s2n_config_load_system_certs <- mkMethod1 "s2n_config_load_system_certs" Optional c_wrap_config_load_system_certs
+    s2n_config_set_cert_authorities_from_trust_store <- mkMethod1 "s2n_config_set_cert_authorities_from_trust_store" Optional c_wrap_config_set_cert_authorities_from_trust_store
 
     -- Verification & Validation
-    s2n_config_set_verify_after_sign <- mk_s2n_config_set_verify_after_sign <$> loadSym dl "s2n_config_set_verify_after_sign"
-    s2n_config_set_check_stapled_ocsp_response <- mk_s2n_config_set_check_stapled_ocsp_response <$> loadSym dl "s2n_config_set_check_stapled_ocsp_response"
-    s2n_config_disable_x509_time_verification <- mk_s2n_config_disable_x509_time_verification <$> loadSym dl "s2n_config_disable_x509_time_verification"
-    s2n_config_disable_x509_intent_verification <- mk_s2n_config_disable_x509_intent_verification <$> loadSym dl "s2n_config_disable_x509_intent_verification"
-    s2n_config_disable_x509_verification <- mk_s2n_config_disable_x509_verification <$> loadSym dl "s2n_config_disable_x509_verification"
-    s2n_config_set_max_cert_chain_depth <- mk_s2n_config_set_max_cert_chain_depth <$> loadSym dl "s2n_config_set_max_cert_chain_depth"
-    s2n_config_set_verify_host_callback <- mk_s2n_config_set_verify_host_callback <$> loadSym dl "s2n_config_set_verify_host_callback"
+    s2n_config_set_verify_after_sign <- mkMethod2 "s2n_config_set_verify_after_sign" Optional c_wrap_config_set_verify_after_sign
+    s2n_config_set_check_stapled_ocsp_response <- mkMethod2 "s2n_config_set_check_stapled_ocsp_response" Optional c_wrap_config_set_check_stapled_ocsp_response
+    s2n_config_disable_x509_time_verification <- mkMethod1 "s2n_config_disable_x509_time_verification" Optional c_wrap_config_disable_x509_time_verification
+    s2n_config_disable_x509_verification <- mkMethod1 "s2n_config_disable_x509_verification" Optional c_wrap_config_disable_x509_verification
+    s2n_config_set_max_cert_chain_depth <- mkMethod2 "s2n_config_set_max_cert_chain_depth" Optional c_wrap_config_set_max_cert_chain_depth
+    s2n_config_set_verify_host_callback <- mkMethod3 "s2n_config_set_verify_host_callback" Optional c_wrap_config_set_verify_host_callback
 
     -- DH Parameters
-    s2n_config_add_dhparams <- mk_s2n_config_add_dhparams <$> loadSym dl "s2n_config_add_dhparams"
+    s2n_config_add_dhparams <- mkMethod2 "s2n_config_add_dhparams" Optional c_wrap_config_add_dhparams
 
     -- Security Policies & Preferences
-    s2n_config_set_cipher_preferences <- mk_s2n_config_set_cipher_preferences <$> loadSym dl "s2n_config_set_cipher_preferences"
-    s2n_config_append_protocol_preference <- mk_s2n_config_append_protocol_preference <$> loadSym dl "s2n_config_append_protocol_preference"
-    s2n_config_set_protocol_preferences <- mk_s2n_config_set_protocol_preferences <$> loadSym dl "s2n_config_set_protocol_preferences"
-    s2n_config_set_status_request_type <- mk_s2n_config_set_status_request_type <$> loadSym dl "s2n_config_set_status_request_type"
-    s2n_config_set_ct_support_level <- mk_s2n_config_set_ct_support_level <$> loadSym dl "s2n_config_set_ct_support_level"
-    s2n_config_set_alert_behavior <- mk_s2n_config_set_alert_behavior <$> loadSym dl "s2n_config_set_alert_behavior"
+    s2n_config_set_cipher_preferences <- mkMethod2 "s2n_config_set_cipher_preferences" Optional c_wrap_config_set_cipher_preferences
+    s2n_config_append_protocol_preference <- mkMethod3 "s2n_config_append_protocol_preference" Optional c_wrap_config_append_protocol_preference
+    s2n_config_set_protocol_preferences <- mkMethod3 "s2n_config_set_protocol_preferences" Optional c_wrap_config_set_protocol_preferences
+    s2n_config_set_status_request_type <- mkMethod2 "s2n_config_set_status_request_type" Optional c_wrap_config_set_status_request_type
+    s2n_config_set_ct_support_level <- mkMethod2 "s2n_config_set_ct_support_level" Optional c_wrap_config_set_ct_support_level
+    s2n_config_set_alert_behavior <- mkMethod2 "s2n_config_set_alert_behavior" Optional c_wrap_config_set_alert_behavior
 
     -- Extension Data
-    s2n_config_set_extension_data <- mk_s2n_config_set_extension_data <$> loadSym dl "s2n_config_set_extension_data"
-    s2n_config_send_max_fragment_length <- mk_s2n_config_send_max_fragment_length <$> loadSym dl "s2n_config_send_max_fragment_length"
-    s2n_config_accept_max_fragment_length <- mk_s2n_config_accept_max_fragment_length <$> loadSym dl "s2n_config_accept_max_fragment_length"
+    s2n_config_set_extension_data <- mkMethod4 "s2n_config_set_extension_data" Optional c_wrap_config_set_extension_data
+    s2n_config_send_max_fragment_length <- mkMethod2 "s2n_config_send_max_fragment_length" Optional c_wrap_config_send_max_fragment_length
+    s2n_config_accept_max_fragment_length <- mkMethod1 "s2n_config_accept_max_fragment_length" Optional c_wrap_config_accept_max_fragment_length
 
     -- Session & Ticket Configuration
-    s2n_config_set_session_state_lifetime <- mk_s2n_config_set_session_state_lifetime <$> loadSym dl "s2n_config_set_session_state_lifetime"
-    s2n_config_set_session_tickets_onoff <- mk_s2n_config_set_session_tickets_onoff <$> loadSym dl "s2n_config_set_session_tickets_onoff"
-    s2n_config_set_session_cache_onoff <- mk_s2n_config_set_session_cache_onoff <$> loadSym dl "s2n_config_set_session_cache_onoff"
-    s2n_config_set_ticket_encrypt_decrypt_key_lifetime <- mk_s2n_config_set_ticket_encrypt_decrypt_key_lifetime <$> loadSym dl "s2n_config_set_ticket_encrypt_decrypt_key_lifetime"
-    s2n_config_set_ticket_decrypt_key_lifetime <- mk_s2n_config_set_ticket_decrypt_key_lifetime <$> loadSym dl "s2n_config_set_ticket_decrypt_key_lifetime"
-    s2n_config_add_ticket_crypto_key <- mk_s2n_config_add_ticket_crypto_key <$> loadSym dl "s2n_config_add_ticket_crypto_key"
-    s2n_config_require_ticket_forward_secrecy <- mk_s2n_config_require_ticket_forward_secrecy <$> loadSym dl "s2n_config_require_ticket_forward_secrecy"
-
+    s2n_config_set_session_state_lifetime <- mkMethod2 "s2n_config_set_session_state_lifetime" Optional c_wrap_config_set_session_state_lifetime
+    s2n_config_set_session_tickets_onoff <- mkMethod2 "s2n_config_set_session_tickets_onoff" Optional c_wrap_config_set_session_tickets_onoff
+    s2n_config_set_session_cache_onoff <- mkMethod2 "s2n_config_set_session_cache_onoff" Optional c_wrap_config_set_session_cache_onoff
+    s2n_config_set_ticket_encrypt_decrypt_key_lifetime <- mkMethod2 "s2n_config_set_ticket_encrypt_decrypt_key_lifetime" Optional c_wrap_config_set_ticket_encrypt_decrypt_key_lifetime
+    s2n_config_set_ticket_decrypt_key_lifetime <- mkMethod2 "s2n_config_set_ticket_decrypt_key_lifetime" Optional c_wrap_config_set_ticket_decrypt_key_lifetime
+    s2n_config_add_ticket_crypto_key <- mkMethod6 "s2n_config_add_ticket_crypto_key" Optional c_wrap_config_add_ticket_crypto_key
+    s2n_config_require_ticket_forward_secrecy <- mkMethod2 "s2n_config_require_ticket_forward_secrecy" Optional c_wrap_config_require_ticket_forward_secrecy
     -- Buffer & I/O Configuration
-    s2n_config_set_send_buffer_size <- mk_s2n_config_set_send_buffer_size <$> loadSym dl "s2n_config_set_send_buffer_size"
-    s2n_config_set_recv_multi_record <- mk_s2n_config_set_recv_multi_record <$> loadSym dl "s2n_config_set_recv_multi_record"
+    s2n_config_set_send_buffer_size <- mkMethod2 "s2n_config_set_send_buffer_size" Optional c_wrap_config_set_send_buffer_size
+    s2n_config_set_recv_multi_record <- mkMethod2 "s2n_config_set_recv_multi_record" Optional c_wrap_config_set_recv_multi_record
 
     -- Miscellaneous Config
-    s2n_config_set_ctx <- mk_s2n_config_set_ctx <$> loadSym dl "s2n_config_set_ctx"
-    s2n_config_get_ctx <- mk_s2n_config_get_ctx <$> loadSym dl "s2n_config_get_ctx"
-    s2n_config_set_client_hello_cb <- mk_s2n_config_set_client_hello_cb <$> loadSym dl "s2n_config_set_client_hello_cb"
-    s2n_config_set_client_hello_cb_mode <- mk_s2n_config_set_client_hello_cb_mode <$> loadSym dl "s2n_config_set_client_hello_cb_mode"
-    s2n_config_set_max_blinding_delay <- mk_s2n_config_set_max_blinding_delay <$> loadSym dl "s2n_config_set_max_blinding_delay"
-    s2n_config_get_client_auth_type <- mk_s2n_config_get_client_auth_type <$> loadSym dl "s2n_config_get_client_auth_type"
-    s2n_config_set_client_auth_type <- mk_s2n_config_set_client_auth_type <$> loadSym dl "s2n_config_set_client_auth_type"
-    s2n_config_set_initial_ticket_count <- mk_s2n_config_set_initial_ticket_count <$> loadSym dl "s2n_config_set_initial_ticket_count"
-    s2n_config_set_psk_mode <- mk_s2n_config_set_psk_mode <$> loadSym dl "s2n_config_set_psk_mode"
-    s2n_config_set_psk_selection_callback <- mk_s2n_config_set_psk_selection_callback <$> loadSym dl "s2n_config_set_psk_selection_callback"
-    s2n_config_set_async_pkey_callback <- mk_s2n_config_set_async_pkey_callback <$> loadSym dl "s2n_config_set_async_pkey_callback"
-    s2n_config_set_async_pkey_validation_mode <- mk_s2n_config_set_async_pkey_validation_mode <$> loadSym dl "s2n_config_set_async_pkey_validation_mode"
-    s2n_config_set_session_ticket_cb <- mk_s2n_config_set_session_ticket_cb <$> loadSym dl "s2n_config_set_session_ticket_cb"
-    s2n_config_set_key_log_cb <- mk_s2n_config_set_key_log_cb <$> loadSym dl "s2n_config_set_key_log_cb"
-    s2n_config_enable_cert_req_dss_legacy_compat <- mk_s2n_config_enable_cert_req_dss_legacy_compat <$> loadSym dl "s2n_config_enable_cert_req_dss_legacy_compat"
-    s2n_config_set_server_max_early_data_size <- mk_s2n_config_set_server_max_early_data_size <$> loadSym dl "s2n_config_set_server_max_early_data_size"
-    s2n_config_set_early_data_cb <- mk_s2n_config_set_early_data_cb <$> loadSym dl "s2n_config_set_early_data_cb"
-    s2n_config_get_supported_groups <- mk_s2n_config_get_supported_groups <$> loadSym dl "s2n_config_get_supported_groups"
-    s2n_config_set_serialization_version <- mk_s2n_config_set_serialization_version <$> loadSym dl "s2n_config_set_serialization_version"
+    s2n_config_set_ctx <- mkMethod2 "s2n_config_set_ctx" Optional c_wrap_config_set_ctx
+    s2n_config_get_ctx <- mkMethod2 "s2n_config_get_ctx" Optional c_wrap_config_get_ctx
+    s2n_config_set_client_hello_cb <- mkMethod3 "s2n_config_set_client_hello_cb" Optional c_wrap_config_set_client_hello_cb
+    s2n_config_set_client_hello_cb_mode <- mkMethod2 "s2n_config_set_client_hello_cb_mode" Optional c_wrap_config_set_client_hello_cb_mode
+    s2n_config_set_max_blinding_delay <- mkMethod2 "s2n_config_set_max_blinding_delay" Optional c_wrap_config_set_max_blinding_delay
+    s2n_config_get_client_auth_type <- mkMethod2 "s2n_config_get_client_auth_type" Optional c_wrap_config_get_client_auth_type
+    s2n_config_set_client_auth_type <- mkMethod2 "s2n_config_set_client_auth_type" Optional c_wrap_config_set_client_auth_type
+    s2n_config_set_initial_ticket_count <- mkMethod2 "s2n_config_set_initial_ticket_count" Optional c_wrap_config_set_initial_ticket_count
+    s2n_config_set_psk_mode <- mkMethod2 "s2n_config_set_psk_mode" Optional c_wrap_config_set_psk_mode
+    s2n_config_set_psk_selection_callback <- mkMethod3 "s2n_config_set_psk_selection_callback" Optional c_wrap_config_set_psk_selection_callback
+    s2n_config_set_async_pkey_callback <- mkMethod2 "s2n_config_set_async_pkey_callback" Optional c_wrap_config_set_async_pkey_callback
+    s2n_config_set_async_pkey_validation_mode <- mkMethod2 "s2n_config_set_async_pkey_validation_mode" Optional c_wrap_config_set_async_pkey_validation_mode
+    s2n_config_set_session_ticket_cb <- mkMethod3 "s2n_config_set_session_ticket_cb" Optional c_wrap_config_set_session_ticket_cb
+    s2n_config_set_key_log_cb <- mkMethod3 "s2n_config_set_key_log_cb" Optional c_wrap_config_set_key_log_cb
+    s2n_config_enable_cert_req_dss_legacy_compat <- mkMethod1 "s2n_config_enable_cert_req_dss_legacy_compat" Optional c_wrap_config_enable_cert_req_dss_legacy_compat
+    s2n_config_set_server_max_early_data_size <- mkMethod2 "s2n_config_set_server_max_early_data_size" Optional c_wrap_config_set_server_max_early_data_size
+    s2n_config_set_early_data_cb <- mkMethod2 "s2n_config_set_early_data_cb" Optional c_wrap_config_set_early_data_cb
+    s2n_config_get_supported_groups <- mkMethod4 "s2n_config_get_supported_groups" Optional c_wrap_config_get_supported_groups
+    s2n_config_set_serialization_version <- mkMethod2 "s2n_config_set_serialization_version" Optional c_wrap_config_set_serialization_version
 
     -- Connection Creation & Management
-    s2n_connection_new <- mk_s2n_connection_new <$> loadSym dl "s2n_connection_new"
-    s2n_connection_set_config <- mk_s2n_connection_set_config <$> loadSym dl "s2n_connection_set_config"
-    s2n_connection_set_ctx <- mk_s2n_connection_set_ctx <$> loadSym dl "s2n_connection_set_ctx"
-    s2n_connection_get_ctx <- mk_s2n_connection_get_ctx <$> loadSym dl "s2n_connection_get_ctx"
-    s2n_client_hello_cb_done <- mk_s2n_client_hello_cb_done <$> loadSym dl "s2n_client_hello_cb_done"
-    s2n_connection_server_name_extension_used <- mk_s2n_connection_server_name_extension_used <$> loadSym dl "s2n_connection_server_name_extension_used"
+    s2n_connection_new <- mkMethod1 "s2n_connection_new" Optional c_wrap_connection_new
+    s2n_connection_set_config <- mkMethod2 "s2n_connection_set_config" Optional c_wrap_connection_set_config
+    s2n_connection_set_ctx <- mkMethod2 "s2n_connection_set_ctx" Optional c_wrap_connection_set_ctx
+    s2n_connection_get_ctx <- mkMethod1 "s2n_connection_get_ctx" Optional c_wrap_connection_get_ctx
+    s2n_client_hello_cb_done <- mkMethod1 "s2n_client_hello_cb_done" Optional c_wrap_client_hello_cb_done
+    s2n_connection_server_name_extension_used <- mkMethod1 "s2n_connection_server_name_extension_used" Optional c_wrap_connection_server_name_extension_used
 
     -- Client Hello Access
-    s2n_connection_get_client_hello <- mk_s2n_connection_get_client_hello <$> loadSym dl "s2n_connection_get_client_hello"
-    s2n_client_hello_parse_message <- mk_s2n_client_hello_parse_message <$> loadSym dl "s2n_client_hello_parse_message"
-    s2n_client_hello_free <- mk_s2n_client_hello_free <$> loadSym dl "s2n_client_hello_free"
-    s2n_client_hello_get_raw_message_length <- mk_s2n_client_hello_get_raw_message_length <$> loadSym dl "s2n_client_hello_get_raw_message_length"
-    s2n_client_hello_get_raw_message <- mk_s2n_client_hello_get_raw_message <$> loadSym dl "s2n_client_hello_get_raw_message"
-    s2n_client_hello_get_cipher_suites_length <- mk_s2n_client_hello_get_cipher_suites_length <$> loadSym dl "s2n_client_hello_get_cipher_suites_length"
-    s2n_client_hello_get_cipher_suites <- mk_s2n_client_hello_get_cipher_suites <$> loadSym dl "s2n_client_hello_get_cipher_suites"
-    s2n_client_hello_get_extensions_length <- mk_s2n_client_hello_get_extensions_length <$> loadSym dl "s2n_client_hello_get_extensions_length"
-    s2n_client_hello_get_extensions <- mk_s2n_client_hello_get_extensions <$> loadSym dl "s2n_client_hello_get_extensions"
-    s2n_client_hello_get_extension_length <- mk_s2n_client_hello_get_extension_length <$> loadSym dl "s2n_client_hello_get_extension_length"
-    s2n_client_hello_get_extension_by_id <- mk_s2n_client_hello_get_extension_by_id <$> loadSym dl "s2n_client_hello_get_extension_by_id"
-    s2n_client_hello_has_extension <- mk_s2n_client_hello_has_extension <$> loadSym dl "s2n_client_hello_has_extension"
-    s2n_client_hello_get_session_id_length <- mk_s2n_client_hello_get_session_id_length <$> loadSym dl "s2n_client_hello_get_session_id_length"
-    s2n_client_hello_get_session_id <- mk_s2n_client_hello_get_session_id <$> loadSym dl "s2n_client_hello_get_session_id"
-    s2n_client_hello_get_compression_methods_length <- mk_s2n_client_hello_get_compression_methods_length <$> loadSym dl "s2n_client_hello_get_compression_methods_length"
-    s2n_client_hello_get_compression_methods <- mk_s2n_client_hello_get_compression_methods <$> loadSym dl "s2n_client_hello_get_compression_methods"
-    s2n_client_hello_get_legacy_protocol_version <- mk_s2n_client_hello_get_legacy_protocol_version <$> loadSym dl "s2n_client_hello_get_legacy_protocol_version"
-    s2n_client_hello_get_random <- mk_s2n_client_hello_get_random <$> loadSym dl "s2n_client_hello_get_random"
-    s2n_client_hello_get_supported_groups <- mk_s2n_client_hello_get_supported_groups <$> loadSym dl "s2n_client_hello_get_supported_groups"
-    s2n_client_hello_get_server_name_length <- mk_s2n_client_hello_get_server_name_length <$> loadSym dl "s2n_client_hello_get_server_name_length"
-    s2n_client_hello_get_server_name <- mk_s2n_client_hello_get_server_name <$> loadSym dl "s2n_client_hello_get_server_name"
-    s2n_client_hello_get_legacy_record_version <- mk_s2n_client_hello_get_legacy_record_version <$> loadSym dl "s2n_client_hello_get_legacy_record_version"
+    s2n_connection_get_client_hello <- mkMethod1 "s2n_connection_get_client_hello" Optional c_wrap_connection_get_client_hello
+    s2n_client_hello_parse_message <- mkMethod2 "s2n_client_hello_parse_message" Optional c_wrap_client_hello_parse_message
+    s2n_client_hello_free <- mkMethod1 "s2n_client_hello_free" Optional c_wrap_client_hello_free
+    s2n_client_hello_get_raw_message_length <- mkMethod1 "s2n_client_hello_get_raw_message_length" Optional c_wrap_client_hello_get_raw_message_length
+    s2n_client_hello_get_raw_message <- mkMethod3 "s2n_client_hello_get_raw_message" Optional c_wrap_client_hello_get_raw_message
+    s2n_client_hello_get_cipher_suites_length <- mkMethod1 "s2n_client_hello_get_cipher_suites_length" Optional c_wrap_client_hello_get_cipher_suites_length
+    s2n_client_hello_get_cipher_suites <- mkMethod3 "s2n_client_hello_get_cipher_suites" Optional c_wrap_client_hello_get_cipher_suites
+    s2n_client_hello_get_extensions_length <- mkMethod1 "s2n_client_hello_get_extensions_length" Optional c_wrap_client_hello_get_extensions_length
+    s2n_client_hello_get_extensions <- mkMethod3 "s2n_client_hello_get_extensions" Optional c_wrap_client_hello_get_extensions
+    s2n_client_hello_get_extension_length <- mkMethod2 "s2n_client_hello_get_extension_length" Optional c_wrap_client_hello_get_extension_length
+    s2n_client_hello_get_extension_by_id <- mkMethod4 "s2n_client_hello_get_extension_by_id" Optional c_wrap_client_hello_get_extension_by_id
+    s2n_client_hello_has_extension <- mkMethod3 "s2n_client_hello_has_extension" Optional c_wrap_client_hello_has_extension
+    s2n_client_hello_get_session_id_length <- mkMethod2 "s2n_client_hello_get_session_id_length" Optional c_wrap_client_hello_get_session_id_length
+    s2n_client_hello_get_session_id <- mkMethod4 "s2n_client_hello_get_session_id" Optional c_wrap_client_hello_get_session_id
+    s2n_client_hello_get_compression_methods_length <- mkMethod2 "s2n_client_hello_get_compression_methods_length" Optional c_wrap_client_hello_get_compression_methods_length
+    s2n_client_hello_get_compression_methods <- mkMethod4 "s2n_client_hello_get_compression_methods" Optional c_wrap_client_hello_get_compression_methods
+    s2n_client_hello_get_legacy_protocol_version <- mkMethod2 "s2n_client_hello_get_legacy_protocol_version" Optional c_wrap_client_hello_get_legacy_protocol_version
+    s2n_client_hello_get_supported_groups <- mkMethod4 "s2n_client_hello_get_supported_groups" Optional c_wrap_client_hello_get_supported_groups
+    s2n_client_hello_get_server_name_length <- mkMethod2 "s2n_client_hello_get_server_name_length" Optional c_wrap_client_hello_get_server_name_length
+    s2n_client_hello_get_server_name <- mkMethod4 "s2n_client_hello_get_server_name" Optional c_wrap_client_hello_get_server_name
+    s2n_client_hello_get_legacy_record_version <- mkMethod2 "s2n_client_hello_get_legacy_record_version" Optional c_wrap_client_hello_get_legacy_record_version
 
     -- File Descriptor & I/O
-    s2n_connection_set_fd <- mk_s2n_connection_set_fd <$> loadSym dl "s2n_connection_set_fd"
-    s2n_connection_set_read_fd <- mk_s2n_connection_set_read_fd <$> loadSym dl "s2n_connection_set_read_fd"
-    s2n_connection_set_write_fd <- mk_s2n_connection_set_write_fd <$> loadSym dl "s2n_connection_set_write_fd"
-    s2n_connection_get_read_fd <- mk_s2n_connection_get_read_fd <$> loadSym dl "s2n_connection_get_read_fd"
-    s2n_connection_get_write_fd <- mk_s2n_connection_get_write_fd <$> loadSym dl "s2n_connection_get_write_fd"
-    s2n_connection_use_corked_io <- mk_s2n_connection_use_corked_io <$> loadSym dl "s2n_connection_use_corked_io"
-    s2n_connection_set_recv_ctx <- mk_s2n_connection_set_recv_ctx <$> loadSym dl "s2n_connection_set_recv_ctx"
-    s2n_connection_set_send_ctx <- mk_s2n_connection_set_send_ctx <$> loadSym dl "s2n_connection_set_send_ctx"
-    s2n_connection_set_recv_cb <- mk_s2n_connection_set_recv_cb <$> loadSym dl "s2n_connection_set_recv_cb"
-    s2n_connection_set_send_cb <- mk_s2n_connection_set_send_cb <$> loadSym dl "s2n_connection_set_send_cb"
-
+    s2n_connection_set_fd <- mkMethod2 "s2n_connection_set_fd" Optional c_wrap_connection_set_fd
+    s2n_connection_set_read_fd <- mkMethod2 "s2n_connection_set_read_fd" Optional c_wrap_connection_set_read_fd
+    s2n_connection_set_write_fd <- mkMethod2 "s2n_connection_set_write_fd" Optional c_wrap_connection_set_write_fd
+    s2n_connection_get_read_fd <- mkMethod2 "s2n_connection_get_read_fd" Optional c_wrap_connection_get_read_fd
+    s2n_connection_get_write_fd <- mkMethod2 "s2n_connection_get_write_fd" Optional c_wrap_connection_get_write_fd
+    s2n_connection_use_corked_io <- mkMethod1 "s2n_connection_use_corked_io" Optional c_wrap_connection_use_corked_io
+    s2n_connection_set_recv_ctx <- mkMethod2 "s2n_connection_set_recv_ctx" Optional c_wrap_connection_set_recv_ctx
+    s2n_connection_set_send_ctx <- mkMethod2 "s2n_connection_set_send_ctx" Optional c_wrap_connection_set_send_ctx
+    s2n_connection_set_recv_cb <- mkMethod2 "s2n_connection_set_recv_cb" Optional c_wrap_connection_set_recv_cb
+    s2n_connection_set_send_cb <- mkMethod2 "s2n_connection_set_send_cb" Optional c_wrap_connection_set_send_cb
     -- Connection Preferences
-    s2n_connection_prefer_throughput <- mk_s2n_connection_prefer_throughput <$> loadSym dl "s2n_connection_prefer_throughput"
-    s2n_connection_prefer_low_latency <- mk_s2n_connection_prefer_low_latency <$> loadSym dl "s2n_connection_prefer_low_latency"
-    s2n_connection_set_recv_buffering <- mk_s2n_connection_set_recv_buffering <$> loadSym dl "s2n_connection_set_recv_buffering"
-    s2n_peek_buffered <- mk_s2n_peek_buffered <$> loadSym dl "s2n_peek_buffered"
-    s2n_connection_set_dynamic_buffers <- mk_s2n_connection_set_dynamic_buffers <$> loadSym dl "s2n_connection_set_dynamic_buffers"
-    s2n_connection_set_dynamic_record_threshold <- mk_s2n_connection_set_dynamic_record_threshold <$> loadSym dl "s2n_connection_set_dynamic_record_threshold"
+    s2n_connection_prefer_throughput <- mkMethod1 "s2n_connection_prefer_throughput" Optional c_wrap_connection_prefer_throughput
+    s2n_connection_prefer_low_latency <- mkMethod1 "s2n_connection_prefer_low_latency" Optional c_wrap_connection_prefer_low_latency
+    s2n_connection_set_recv_buffering <- mkMethod2 "s2n_connection_set_recv_buffering" Optional c_wrap_connection_set_recv_buffering
+    s2n_peek_buffered <- mkMethod1Direct "s2n_peek_buffered" Optional mk_s2n_peek_buffered
+    s2n_connection_set_dynamic_buffers <- mkMethod2 "s2n_connection_set_dynamic_buffers" Optional c_wrap_connection_set_dynamic_buffers
+    s2n_connection_set_dynamic_record_threshold <- mkMethod3 "s2n_connection_set_dynamic_record_threshold" Optional c_wrap_connection_set_dynamic_record_threshold
 
     -- Host Verification
-    s2n_connection_set_verify_host_callback <- mk_s2n_connection_set_verify_host_callback <$> loadSym dl "s2n_connection_set_verify_host_callback"
-
+    s2n_connection_set_verify_host_callback <- mkMethod3 "s2n_connection_set_verify_host_callback" Optional c_wrap_connection_set_verify_host_callback
     -- Blinding & Security
-    s2n_connection_set_blinding <- mk_s2n_connection_set_blinding <$> loadSym dl "s2n_connection_set_blinding"
-    s2n_connection_get_delay <- mk_s2n_connection_get_delay <$> loadSym dl "s2n_connection_get_delay"
-
+    s2n_connection_set_blinding <- mkMethod2 "s2n_connection_set_blinding" Optional c_wrap_connection_set_blinding
+    s2n_connection_get_delay <- mkMethod1Direct "s2n_connection_get_delay" Optional mk_s2n_connection_get_delay
     -- Cipher & Protocol Configuration
-    s2n_connection_set_cipher_preferences <- mk_s2n_connection_set_cipher_preferences <$> loadSym dl "s2n_connection_set_cipher_preferences"
-    s2n_connection_request_key_update <- mk_s2n_connection_request_key_update <$> loadSym dl "s2n_connection_request_key_update"
-    s2n_connection_append_protocol_preference <- mk_s2n_connection_append_protocol_preference <$> loadSym dl "s2n_connection_append_protocol_preference"
-    s2n_connection_set_protocol_preferences <- mk_s2n_connection_set_protocol_preferences <$> loadSym dl "s2n_connection_set_protocol_preferences"
+    s2n_connection_set_cipher_preferences <- mkMethod2 "s2n_connection_set_cipher_preferences" Optional c_wrap_connection_set_cipher_preferences
+    s2n_connection_request_key_update <- mkMethod2 "s2n_connection_request_key_update" Optional c_wrap_connection_request_key_update
+    s2n_connection_append_protocol_preference <- mkMethod3 "s2n_connection_append_protocol_preference" Optional c_wrap_connection_append_protocol_preference
+    s2n_connection_set_protocol_preferences <- mkMethod3 "s2n_connection_set_protocol_preferences" Optional c_wrap_connection_set_protocol_preferences
 
     -- Server Name (SNI)
-    s2n_set_server_name <- mk_s2n_set_server_name <$> loadSym dl "s2n_set_server_name"
-    s2n_get_server_name <- mk_s2n_get_server_name <$> loadSym dl "s2n_get_server_name"
-
+    s2n_set_server_name <- mkMethod2 "s2n_set_server_name" Optional c_wrap_set_server_name
+    s2n_get_server_name <- mkMethod1 "s2n_get_server_name" Optional c_wrap_get_server_name
     -- Application Protocol (ALPN)
-    s2n_get_application_protocol <- mk_s2n_get_application_protocol <$> loadSym dl "s2n_get_application_protocol"
+    s2n_get_application_protocol <- mkMethod1 "s2n_get_application_protocol" Optional c_wrap_get_application_protocol
 
     -- OCSP & Certificate Transparency
-    s2n_connection_get_ocsp_response <- mk_s2n_connection_get_ocsp_response <$> loadSym dl "s2n_connection_get_ocsp_response"
-    s2n_connection_get_sct_list <- mk_s2n_connection_get_sct_list <$> loadSym dl "s2n_connection_get_sct_list"
+    s2n_connection_get_ocsp_response <- mkMethod2 "s2n_connection_get_ocsp_response" Optional c_wrap_connection_get_ocsp_response
+    s2n_connection_get_sct_list <- mkMethod2 "s2n_connection_get_sct_list" Optional c_wrap_connection_get_sct_list
 
     -- Handshake & TLS Operations
-    s2n_negotiate <- mk_s2n_negotiate <$> loadSym dl "s2n_negotiate"
-    s2n_send <- mk_s2n_send <$> loadSym dl "s2n_send"
-    s2n_recv <- mk_s2n_recv <$> loadSym dl "s2n_recv"
-    s2n_peek <- mk_s2n_peek <$> loadSym dl "s2n_peek"
-    s2n_connection_free_handshake <- mk_s2n_connection_free_handshake <$> loadSym dl "s2n_connection_free_handshake"
-    s2n_connection_release_buffers <- mk_s2n_connection_release_buffers <$> loadSym dl "s2n_connection_release_buffers"
-    s2n_connection_wipe <- mk_s2n_connection_wipe <$> loadSym dl "s2n_connection_wipe"
-    s2n_connection_free <- mk_s2n_connection_free <$> loadSym dl "s2n_connection_free"
-    s2n_shutdown <- mk_s2n_shutdown <$> loadSym dl "s2n_shutdown"
-    s2n_shutdown_send <- mk_s2n_shutdown_send <$> loadSym dl "s2n_shutdown_send"
+    s2n_negotiate <- mkMethod2 "s2n_negotiate" Optional c_wrap_negotiate
+    s2n_send <- mkMethod4 "s2n_send" Optional c_wrap_send
+    s2n_recv <- mkMethod4 "s2n_recv" Optional c_wrap_recv
+    s2n_peek <- mkMethod1Direct "s2n_peek" Optional mk_s2n_peek
+    s2n_connection_free_handshake <- mkMethod1 "s2n_connection_free_handshake" Optional c_wrap_connection_free_handshake
+    s2n_connection_release_buffers <- mkMethod1 "s2n_connection_release_buffers" Optional c_wrap_connection_release_buffers
+    s2n_connection_wipe <- mkMethod1 "s2n_connection_wipe" Optional c_wrap_connection_wipe
+    s2n_connection_free <- mkMethod1 "s2n_connection_free" Optional c_wrap_connection_free
+    s2n_shutdown <- mkMethod2 "s2n_shutdown" Optional c_wrap_shutdown
+    s2n_shutdown_send <- mkMethod2 "s2n_shutdown_send" Optional c_wrap_shutdown_send
 
     -- Client Authentication
-    s2n_connection_get_client_auth_type <- mk_s2n_connection_get_client_auth_type <$> loadSym dl "s2n_connection_get_client_auth_type"
-    s2n_connection_set_client_auth_type <- mk_s2n_connection_set_client_auth_type <$> loadSym dl "s2n_connection_set_client_auth_type"
-    s2n_connection_get_client_cert_chain <- mk_s2n_connection_get_client_cert_chain <$> loadSym dl "s2n_connection_get_client_cert_chain"
-    s2n_connection_client_cert_used <- mk_s2n_connection_client_cert_used <$> loadSym dl "s2n_connection_client_cert_used"
+    s2n_connection_get_client_auth_type <- mkMethod2 "s2n_connection_get_client_auth_type" Optional c_wrap_connection_get_client_auth_type
+    s2n_connection_set_client_auth_type <- mkMethod2 "s2n_connection_set_client_auth_type" Optional c_wrap_connection_set_client_auth_type
+    s2n_connection_get_client_cert_chain <- mkMethod3 "s2n_connection_get_client_cert_chain" Optional c_wrap_connection_get_client_cert_chain
+    s2n_connection_client_cert_used <- mkMethod1 "s2n_connection_client_cert_used" Optional c_wrap_connection_client_cert_used
 
     -- Session Management
-    s2n_connection_add_new_tickets_to_send <- mk_s2n_connection_add_new_tickets_to_send <$> loadSym dl "s2n_connection_add_new_tickets_to_send"
-    s2n_connection_get_tickets_sent <- mk_s2n_connection_get_tickets_sent <$> loadSym dl "s2n_connection_get_tickets_sent"
-    s2n_connection_set_server_keying_material_lifetime <- mk_s2n_connection_set_server_keying_material_lifetime <$> loadSym dl "s2n_connection_set_server_keying_material_lifetime"
-    s2n_session_ticket_get_data_len <- mk_s2n_session_ticket_get_data_len <$> loadSym dl "s2n_session_ticket_get_data_len"
-    s2n_session_ticket_get_data <- mk_s2n_session_ticket_get_data <$> loadSym dl "s2n_session_ticket_get_data"
-    s2n_session_ticket_get_lifetime <- mk_s2n_session_ticket_get_lifetime <$> loadSym dl "s2n_session_ticket_get_lifetime"
-    s2n_connection_set_session <- mk_s2n_connection_set_session <$> loadSym dl "s2n_connection_set_session"
-    s2n_connection_get_session <- mk_s2n_connection_get_session <$> loadSym dl "s2n_connection_get_session"
-    s2n_connection_get_session_ticket_lifetime_hint <- mk_s2n_connection_get_session_ticket_lifetime_hint <$> loadSym dl "s2n_connection_get_session_ticket_lifetime_hint"
-    s2n_connection_get_session_length <- mk_s2n_connection_get_session_length <$> loadSym dl "s2n_connection_get_session_length"
-    s2n_connection_get_session_id_length <- mk_s2n_connection_get_session_id_length <$> loadSym dl "s2n_connection_get_session_id_length"
-    s2n_connection_get_session_id <- mk_s2n_connection_get_session_id <$> loadSym dl "s2n_connection_get_session_id"
-    s2n_connection_is_session_resumed <- mk_s2n_connection_is_session_resumed <$> loadSym dl "s2n_connection_is_session_resumed"
+    s2n_connection_add_new_tickets_to_send <- mkMethod2 "s2n_connection_add_new_tickets_to_send" Optional c_wrap_connection_add_new_tickets_to_send
+    s2n_connection_get_tickets_sent <- mkMethod2 "s2n_connection_get_tickets_sent" Optional c_wrap_connection_get_tickets_sent
+    s2n_connection_set_server_keying_material_lifetime <- mkMethod2 "s2n_connection_set_server_keying_material_lifetime" Optional c_wrap_connection_set_server_keying_material_lifetime
+    s2n_session_ticket_get_data_len <- mkMethod2 "s2n_session_ticket_get_data_len" Optional c_wrap_session_ticket_get_data_len
+    s2n_session_ticket_get_data <- mkMethod3 "s2n_session_ticket_get_data" Optional c_wrap_session_ticket_get_data
+    s2n_session_ticket_get_lifetime <- mkMethod2 "s2n_session_ticket_get_lifetime" Optional c_wrap_session_ticket_get_lifetime
+    s2n_connection_set_session <- mkMethod3 "s2n_connection_set_session" Optional c_wrap_connection_set_session
+    s2n_connection_get_session <- mkMethod3 "s2n_connection_get_session" Optional c_wrap_connection_get_session
+    s2n_connection_get_session_ticket_lifetime_hint <- mkMethod1 "s2n_connection_get_session_ticket_lifetime_hint" Optional c_wrap_connection_get_session_ticket_lifetime_hint
+    s2n_connection_get_session_length <- mkMethod1 "s2n_connection_get_session_length" Optional c_wrap_connection_get_session_length
+    s2n_connection_get_session_id_length <- mkMethod1 "s2n_connection_get_session_id_length" Optional c_wrap_connection_get_session_id_length
+    s2n_connection_get_session_id <- mkMethod3 "s2n_connection_get_session_id" Optional c_wrap_connection_get_session_id
+    s2n_connection_is_session_resumed <- mkMethod1 "s2n_connection_is_session_resumed" Optional c_wrap_connection_is_session_resumed
 
     -- Certificate Information
-    s2n_connection_is_ocsp_stapled <- mk_s2n_connection_is_ocsp_stapled <$> loadSym dl "s2n_connection_is_ocsp_stapled"
-    s2n_connection_get_selected_signature_algorithm <- mk_s2n_connection_get_selected_signature_algorithm <$> loadSym dl "s2n_connection_get_selected_signature_algorithm"
-    s2n_connection_get_selected_digest_algorithm <- mk_s2n_connection_get_selected_digest_algorithm <$> loadSym dl "s2n_connection_get_selected_digest_algorithm"
-    s2n_connection_get_selected_client_cert_signature_algorithm <- mk_s2n_connection_get_selected_client_cert_signature_algorithm <$> loadSym dl "s2n_connection_get_selected_client_cert_signature_algorithm"
-    s2n_connection_get_selected_client_cert_digest_algorithm <- mk_s2n_connection_get_selected_client_cert_digest_algorithm <$> loadSym dl "s2n_connection_get_selected_client_cert_digest_algorithm"
-    s2n_connection_get_signature_scheme <- mk_s2n_connection_get_signature_scheme <$> loadSym dl "s2n_connection_get_signature_scheme"
-    s2n_connection_get_selected_cert <- mk_s2n_connection_get_selected_cert <$> loadSym dl "s2n_connection_get_selected_cert"
-    s2n_cert_chain_get_length <- mk_s2n_cert_chain_get_length <$> loadSym dl "s2n_cert_chain_get_length"
-    s2n_cert_chain_get_cert <- mk_s2n_cert_chain_get_cert <$> loadSym dl "s2n_cert_chain_get_cert"
-    s2n_cert_get_der <- mk_s2n_cert_get_der <$> loadSym dl "s2n_cert_get_der"
-    s2n_connection_get_peer_cert_chain <- mk_s2n_connection_get_peer_cert_chain <$> loadSym dl "s2n_connection_get_peer_cert_chain"
-    s2n_cert_get_x509_extension_value_length <- mk_s2n_cert_get_x509_extension_value_length <$> loadSym dl "s2n_cert_get_x509_extension_value_length"
-    s2n_cert_get_x509_extension_value <- mk_s2n_cert_get_x509_extension_value <$> loadSym dl "s2n_cert_get_x509_extension_value"
-    s2n_cert_get_utf8_string_from_extension_data_length <- mk_s2n_cert_get_utf8_string_from_extension_data_length <$> loadSym dl "s2n_cert_get_utf8_string_from_extension_data_length"
-    s2n_cert_get_utf8_string_from_extension_data <- mk_s2n_cert_get_utf8_string_from_extension_data <$> loadSym dl "s2n_cert_get_utf8_string_from_extension_data"
+    s2n_connection_is_ocsp_stapled <- mkMethod1 "s2n_connection_is_ocsp_stapled" Optional c_wrap_connection_is_ocsp_stapled
+    s2n_connection_get_selected_signature_algorithm <- mkMethod2 "s2n_connection_get_selected_signature_algorithm" Optional c_wrap_connection_get_selected_signature_algorithm
+    s2n_connection_get_selected_digest_algorithm <- mkMethod2 "s2n_connection_get_selected_digest_algorithm" Optional c_wrap_connection_get_selected_digest_algorithm
+    s2n_connection_get_selected_client_cert_signature_algorithm <- mkMethod2 "s2n_connection_get_selected_client_cert_signature_algorithm" Optional c_wrap_connection_get_selected_client_cert_signature_algorithm
+    s2n_connection_get_selected_client_cert_digest_algorithm <- mkMethod2 "s2n_connection_get_selected_client_cert_digest_algorithm" Optional c_wrap_connection_get_selected_client_cert_digest_algorithm
+    s2n_connection_get_selected_cert <- mkMethod1 "s2n_connection_get_selected_cert" Optional c_wrap_connection_get_selected_cert
+    s2n_cert_chain_get_length <- mkMethod2 "s2n_cert_chain_get_length" Optional c_wrap_cert_chain_get_length
+    s2n_cert_chain_get_cert <- mkMethod3 "s2n_cert_chain_get_cert" Optional c_wrap_cert_chain_get_cert
+    s2n_cert_get_der <- mkMethod3 "s2n_cert_get_der" Optional c_wrap_cert_get_der
+    s2n_connection_get_peer_cert_chain <- mkMethod2 "s2n_connection_get_peer_cert_chain" Optional c_wrap_connection_get_peer_cert_chain
+    s2n_cert_get_x509_extension_value_length <- mkMethod3 "s2n_cert_get_x509_extension_value_length" Optional c_wrap_cert_get_x509_extension_value_length
+    s2n_cert_get_x509_extension_value <- mkMethod5 "s2n_cert_get_x509_extension_value" Optional c_wrap_cert_get_x509_extension_value
+    s2n_cert_get_utf8_string_from_extension_data_length <- mkMethod3 "s2n_cert_get_utf8_string_from_extension_data_length" Optional c_wrap_cert_get_utf8_string_from_extension_data_length
+    s2n_cert_get_utf8_string_from_extension_data <- mkMethod4 "s2n_cert_get_utf8_string_from_extension_data" Optional c_wrap_cert_get_utf8_string_from_extension_data
 
     -- Pre-Shared Keys (PSK)
-    s2n_external_psk_new <- mk_s2n_external_psk_new <$> loadSym dl "s2n_external_psk_new"
-    s2n_psk_free <- mk_s2n_psk_free <$> loadSym dl "s2n_psk_free"
-    s2n_psk_set_identity <- mk_s2n_psk_set_identity <$> loadSym dl "s2n_psk_set_identity"
-    s2n_psk_set_secret <- mk_s2n_psk_set_secret <$> loadSym dl "s2n_psk_set_secret"
-    s2n_psk_set_hmac <- mk_s2n_psk_set_hmac <$> loadSym dl "s2n_psk_set_hmac"
-    s2n_connection_append_psk <- mk_s2n_connection_append_psk <$> loadSym dl "s2n_connection_append_psk"
-    s2n_connection_set_psk_mode <- mk_s2n_connection_set_psk_mode <$> loadSym dl "s2n_connection_set_psk_mode"
-    s2n_connection_get_negotiated_psk_identity_length <- mk_s2n_connection_get_negotiated_psk_identity_length <$> loadSym dl "s2n_connection_get_negotiated_psk_identity_length"
-    s2n_connection_get_negotiated_psk_identity <- mk_s2n_connection_get_negotiated_psk_identity <$> loadSym dl "s2n_connection_get_negotiated_psk_identity"
-    s2n_offered_psk_new <- mk_s2n_offered_psk_new <$> loadSym dl "s2n_offered_psk_new"
-    s2n_offered_psk_free <- mk_s2n_offered_psk_free <$> loadSym dl "s2n_offered_psk_free"
-    s2n_offered_psk_get_identity <- mk_s2n_offered_psk_get_identity <$> loadSym dl "s2n_offered_psk_get_identity"
-    s2n_offered_psk_list_has_next <- mk_s2n_offered_psk_list_has_next <$> loadSym dl "s2n_offered_psk_list_has_next"
-    s2n_offered_psk_list_next <- mk_s2n_offered_psk_list_next <$> loadSym dl "s2n_offered_psk_list_next"
-    s2n_offered_psk_list_reread <- mk_s2n_offered_psk_list_reread <$> loadSym dl "s2n_offered_psk_list_reread"
-    s2n_offered_psk_list_choose_psk <- mk_s2n_offered_psk_list_choose_psk <$> loadSym dl "s2n_offered_psk_list_choose_psk"
-    s2n_psk_configure_early_data <- mk_s2n_psk_configure_early_data <$> loadSym dl "s2n_psk_configure_early_data"
-    s2n_psk_set_application_protocol <- mk_s2n_psk_set_application_protocol <$> loadSym dl "s2n_psk_set_application_protocol"
-    s2n_psk_set_early_data_context <- mk_s2n_psk_set_early_data_context <$> loadSym dl "s2n_psk_set_early_data_context"
+    s2n_external_psk_new <- mkMethod0 "s2n_external_psk_new" Optional c_wrap_external_psk_new
+    s2n_psk_free <- mkMethod1 "s2n_psk_free" Optional c_wrap_psk_free
+    s2n_psk_set_identity <- mkMethod3 "s2n_psk_set_identity" Optional c_wrap_psk_set_identity
+    s2n_psk_set_secret <- mkMethod3 "s2n_psk_set_secret" Optional c_wrap_psk_set_secret
+    s2n_psk_set_hmac <- mkMethod2 "s2n_psk_set_hmac" Optional c_wrap_psk_set_hmac
+    s2n_connection_append_psk <- mkMethod2 "s2n_connection_append_psk" Optional c_wrap_connection_append_psk
+    s2n_connection_set_psk_mode <- mkMethod2 "s2n_connection_set_psk_mode" Optional c_wrap_connection_set_psk_mode
+    s2n_connection_get_negotiated_psk_identity_length <- mkMethod2 "s2n_connection_get_negotiated_psk_identity_length" Optional c_wrap_connection_get_negotiated_psk_identity_length
+    s2n_connection_get_negotiated_psk_identity <- mkMethod3 "s2n_connection_get_negotiated_psk_identity" Optional c_wrap_connection_get_negotiated_psk_identity
+    s2n_offered_psk_new <- mkMethod0 "s2n_offered_psk_new" Optional c_wrap_offered_psk_new
+    s2n_offered_psk_free <- mkMethod1 "s2n_offered_psk_free" Optional c_wrap_offered_psk_free
+    s2n_offered_psk_get_identity <- mkMethod3 "s2n_offered_psk_get_identity" Optional c_wrap_offered_psk_get_identity
+    s2n_offered_psk_list_has_next <- mkMethod1Direct "s2n_offered_psk_list_has_next" Optional mk_s2n_offered_psk_list_has_next
+    s2n_offered_psk_list_next <- mkMethod2 "s2n_offered_psk_list_next" Optional c_wrap_offered_psk_list_next
+    s2n_offered_psk_list_reread <- mkMethod1 "s2n_offered_psk_list_reread" Optional c_wrap_offered_psk_list_reread
+    s2n_offered_psk_list_choose_psk <- mkMethod2 "s2n_offered_psk_list_choose_psk" Optional c_wrap_offered_psk_list_choose_psk
+    s2n_psk_configure_early_data <- mkMethod4 "s2n_psk_configure_early_data" Optional c_wrap_psk_configure_early_data
+    s2n_psk_set_application_protocol <- mkMethod3 "s2n_psk_set_application_protocol" Optional c_wrap_psk_set_application_protocol
+    s2n_psk_set_early_data_context <- mkMethod3 "s2n_psk_set_early_data_context" Optional c_wrap_psk_set_early_data_context
 
     -- Connection Statistics
-    s2n_connection_get_wire_bytes_in <- mk_s2n_connection_get_wire_bytes_in <$> loadSym dl "s2n_connection_get_wire_bytes_in"
-    s2n_connection_get_wire_bytes_out <- mk_s2n_connection_get_wire_bytes_out <$> loadSym dl "s2n_connection_get_wire_bytes_out"
-
+    s2n_connection_get_wire_bytes_in <- mkMethod1Direct "s2n_connection_get_wire_bytes_in" Optional mk_s2n_connection_get_wire_bytes_in
+    s2n_connection_get_wire_bytes_out <- mkMethod1Direct "s2n_connection_get_wire_bytes_out" Optional mk_s2n_connection_get_wire_bytes_out
     -- Protocol Version Information
-    s2n_connection_get_client_protocol_version <- mk_s2n_connection_get_client_protocol_version <$> loadSym dl "s2n_connection_get_client_protocol_version"
-    s2n_connection_get_server_protocol_version <- mk_s2n_connection_get_server_protocol_version <$> loadSym dl "s2n_connection_get_server_protocol_version"
-    s2n_connection_get_actual_protocol_version <- mk_s2n_connection_get_actual_protocol_version <$> loadSym dl "s2n_connection_get_actual_protocol_version"
-    s2n_connection_get_client_hello_version <- mk_s2n_connection_get_client_hello_version <$> loadSym dl "s2n_connection_get_client_hello_version"
+    s2n_connection_get_client_protocol_version <- mkMethod1 "s2n_connection_get_client_protocol_version" Optional c_wrap_connection_get_client_protocol_version
+    s2n_connection_get_server_protocol_version <- mkMethod1 "s2n_connection_get_server_protocol_version" Optional c_wrap_connection_get_server_protocol_version
+    s2n_connection_get_actual_protocol_version <- mkMethod1 "s2n_connection_get_actual_protocol_version" Optional c_wrap_connection_get_actual_protocol_version
+    s2n_connection_get_client_hello_version <- mkMethod1 "s2n_connection_get_client_hello_version" Optional c_wrap_connection_get_client_hello_version
 
     -- Cipher & Security Information
-    s2n_connection_get_cipher <- mk_s2n_connection_get_cipher <$> loadSym dl "s2n_connection_get_cipher"
-    s2n_connection_get_certificate_match <- mk_s2n_connection_get_certificate_match <$> loadSym dl "s2n_connection_get_certificate_match"
-    s2n_connection_get_master_secret <- mk_s2n_connection_get_master_secret <$> loadSym dl "s2n_connection_get_master_secret"
-    s2n_connection_tls_exporter <- mk_s2n_connection_tls_exporter <$> loadSym dl "s2n_connection_tls_exporter"
-    s2n_connection_get_cipher_iana_value <- mk_s2n_connection_get_cipher_iana_value <$> loadSym dl "s2n_connection_get_cipher_iana_value"
-    s2n_connection_is_valid_for_cipher_preferences <- mk_s2n_connection_is_valid_for_cipher_preferences <$> loadSym dl "s2n_connection_is_valid_for_cipher_preferences"
-    s2n_connection_get_curve <- mk_s2n_connection_get_curve <$> loadSym dl "s2n_connection_get_curve"
-    s2n_connection_get_kem_name <- mk_s2n_connection_get_kem_name <$> loadSym dl "s2n_connection_get_kem_name"
-    s2n_connection_get_kem_group_name <- mk_s2n_connection_get_kem_group_name <$> loadSym dl "s2n_connection_get_kem_group_name"
-    s2n_connection_get_key_exchange_group <- mk_s2n_connection_get_key_exchange_group <$> loadSym dl "s2n_connection_get_key_exchange_group"
-    s2n_connection_get_alert <- mk_s2n_connection_get_alert <$> loadSym dl "s2n_connection_get_alert"
-    s2n_connection_get_handshake_type_name <- mk_s2n_connection_get_handshake_type_name <$> loadSym dl "s2n_connection_get_handshake_type_name"
-    s2n_connection_get_last_message_name <- mk_s2n_connection_get_last_message_name <$> loadSym dl "s2n_connection_get_last_message_name"
+    s2n_connection_get_cipher <- mkMethod1 "s2n_connection_get_cipher" Optional c_wrap_connection_get_cipher
+    s2n_connection_get_certificate_match <- mkMethod2 "s2n_connection_get_certificate_match" Optional c_wrap_connection_get_certificate_match
+    s2n_connection_get_master_secret <- mkMethod3 "s2n_connection_get_master_secret" Optional c_wrap_connection_get_master_secret
+    s2n_connection_tls_exporter <- mkMethod7 "s2n_connection_tls_exporter" Optional c_wrap_connection_tls_exporter
+    s2n_connection_get_cipher_iana_value <- mkMethod3 "s2n_connection_get_cipher_iana_value" Optional c_wrap_connection_get_cipher_iana_value
+    s2n_connection_is_valid_for_cipher_preferences <- mkMethod2 "s2n_connection_is_valid_for_cipher_preferences" Optional c_wrap_connection_is_valid_for_cipher_preferences
+    s2n_connection_get_curve <- mkMethod1 "s2n_connection_get_curve" Optional c_wrap_connection_get_curve
+    s2n_connection_get_kem_name <- mkMethod1 "s2n_connection_get_kem_name" Optional c_wrap_connection_get_kem_name
+    s2n_connection_get_kem_group_name <- mkMethod1 "s2n_connection_get_kem_group_name" Optional c_wrap_connection_get_kem_group_name
+    s2n_connection_get_key_exchange_group <- mkMethod2 "s2n_connection_get_key_exchange_group" Optional c_wrap_connection_get_key_exchange_group
+    s2n_connection_get_alert <- mkMethod1 "s2n_connection_get_alert" Optional c_wrap_connection_get_alert
+    s2n_connection_get_handshake_type_name <- mkMethod1 "s2n_connection_get_handshake_type_name" Optional c_wrap_connection_get_handshake_type_name
+    s2n_connection_get_last_message_name <- mkMethod1 "s2n_connection_get_last_message_name" Optional c_wrap_connection_get_last_message_name
 
     -- Async Private Key Operations
-    s2n_async_pkey_op_perform <- mk_s2n_async_pkey_op_perform <$> loadSym dl "s2n_async_pkey_op_perform"
-    s2n_async_pkey_op_apply <- mk_s2n_async_pkey_op_apply <$> loadSym dl "s2n_async_pkey_op_apply"
-    s2n_async_pkey_op_free <- mk_s2n_async_pkey_op_free <$> loadSym dl "s2n_async_pkey_op_free"
-    s2n_async_pkey_op_get_op_type <- mk_s2n_async_pkey_op_get_op_type <$> loadSym dl "s2n_async_pkey_op_get_op_type"
-    s2n_async_pkey_op_get_input_size <- mk_s2n_async_pkey_op_get_input_size <$> loadSym dl "s2n_async_pkey_op_get_input_size"
-    s2n_async_pkey_op_get_input <- mk_s2n_async_pkey_op_get_input <$> loadSym dl "s2n_async_pkey_op_get_input"
-    s2n_async_pkey_op_set_output <- mk_s2n_async_pkey_op_set_output <$> loadSym dl "s2n_async_pkey_op_set_output"
-
+    s2n_async_pkey_op_perform <- mkMethod2 "s2n_async_pkey_op_perform" Optional c_wrap_async_pkey_op_perform
+    s2n_async_pkey_op_apply <- mkMethod2 "s2n_async_pkey_op_apply" Optional c_wrap_async_pkey_op_apply
+    s2n_async_pkey_op_free <- mkMethod1 "s2n_async_pkey_op_free" Optional c_wrap_async_pkey_op_free
+    s2n_async_pkey_op_get_op_type <- mkMethod2 "s2n_async_pkey_op_get_op_type" Optional c_wrap_async_pkey_op_get_op_type
+    s2n_async_pkey_op_get_input_size <- mkMethod2 "s2n_async_pkey_op_get_input_size" Optional c_wrap_async_pkey_op_get_input_size
+    s2n_async_pkey_op_get_input <- mkMethod3 "s2n_async_pkey_op_get_input" Optional c_wrap_async_pkey_op_get_input
+    s2n_async_pkey_op_set_output <- mkMethod3 "s2n_async_pkey_op_set_output" Optional c_wrap_async_pkey_op_set_output
     -- Early Data
-    s2n_connection_set_server_max_early_data_size <- mk_s2n_connection_set_server_max_early_data_size <$> loadSym dl "s2n_connection_set_server_max_early_data_size"
-    s2n_connection_set_server_early_data_context <- mk_s2n_connection_set_server_early_data_context <$> loadSym dl "s2n_connection_set_server_early_data_context"
-    s2n_connection_get_early_data_status <- mk_s2n_connection_get_early_data_status <$> loadSym dl "s2n_connection_get_early_data_status"
-    s2n_connection_get_remaining_early_data_size <- mk_s2n_connection_get_remaining_early_data_size <$> loadSym dl "s2n_connection_get_remaining_early_data_size"
-    s2n_connection_get_max_early_data_size <- mk_s2n_connection_get_max_early_data_size <$> loadSym dl "s2n_connection_get_max_early_data_size"
-    s2n_send_early_data <- mk_s2n_send_early_data <$> loadSym dl "s2n_send_early_data"
-    s2n_recv_early_data <- mk_s2n_recv_early_data <$> loadSym dl "s2n_recv_early_data"
-    s2n_offered_early_data_get_context_length <- mk_s2n_offered_early_data_get_context_length <$> loadSym dl "s2n_offered_early_data_get_context_length"
-    s2n_offered_early_data_get_context <- mk_s2n_offered_early_data_get_context <$> loadSym dl "s2n_offered_early_data_get_context"
-    s2n_offered_early_data_reject <- mk_s2n_offered_early_data_reject <$> loadSym dl "s2n_offered_early_data_reject"
-    s2n_offered_early_data_accept <- mk_s2n_offered_early_data_accept <$> loadSym dl "s2n_offered_early_data_accept"
+    s2n_connection_set_server_max_early_data_size <- mkMethod2 "s2n_connection_set_server_max_early_data_size" Optional c_wrap_connection_set_server_max_early_data_size
+    s2n_connection_set_server_early_data_context <- mkMethod3 "s2n_connection_set_server_early_data_context" Optional c_wrap_connection_set_server_early_data_context
+    s2n_connection_get_early_data_status <- mkMethod2 "s2n_connection_get_early_data_status" Optional c_wrap_connection_get_early_data_status
+    s2n_connection_get_remaining_early_data_size <- mkMethod2 "s2n_connection_get_remaining_early_data_size" Optional c_wrap_connection_get_remaining_early_data_size
+    s2n_connection_get_max_early_data_size <- mkMethod2 "s2n_connection_get_max_early_data_size" Optional c_wrap_connection_get_max_early_data_size
+    s2n_send_early_data <- mkMethod5 "s2n_send_early_data" Optional c_wrap_send_early_data
+    s2n_recv_early_data <- mkMethod5 "s2n_recv_early_data" Optional c_wrap_recv_early_data
+    s2n_offered_early_data_get_context_length <- mkMethod2 "s2n_offered_early_data_get_context_length" Optional c_wrap_offered_early_data_get_context_length
+    s2n_offered_early_data_get_context <- mkMethod3 "s2n_offered_early_data_get_context" Optional c_wrap_offered_early_data_get_context
+    s2n_offered_early_data_reject <- mkMethod1 "s2n_offered_early_data_reject" Optional c_wrap_offered_early_data_reject
+    s2n_offered_early_data_accept <- mkMethod1 "s2n_offered_early_data_accept" Optional c_wrap_offered_early_data_accept
 
     -- Connection Serialization
-    s2n_connection_serialization_length <- mk_s2n_connection_serialization_length <$> loadSym dl "s2n_connection_serialization_length"
-    s2n_connection_serialize <- mk_s2n_connection_serialize <$> loadSym dl "s2n_connection_serialize"
-    s2n_connection_deserialize <- mk_s2n_connection_deserialize <$> loadSym dl "s2n_connection_deserialize"
+    s2n_connection_serialization_length <- mkMethod2 "s2n_connection_serialization_length" Optional c_wrap_connection_serialization_length
+    s2n_connection_serialize <- mkMethod3 "s2n_connection_serialize" Optional c_wrap_connection_serialize
+    s2n_connection_deserialize <- mkMethod3 "s2n_connection_deserialize" Optional c_wrap_connection_deserialize
 
-    pure S2nTlsSys{..}
+    missing <- readIORef missingRef
+    let missingSymbols = [] -- Will be set by caller
+    pure (S2nTlsSys{..}, missing)
 
 --------------------------------------------------------------------------------
--- Foreign Import Dynamic Declarations
+-- Foreign Imports for C Wrappers
 --------------------------------------------------------------------------------
 
--- Initialization & Cleanup
-foreign import ccall "dynamic" mk_s2n_init :: FunPtr S2nInit -> S2nInit
-foreign import ccall "dynamic" mk_s2n_cleanup :: FunPtr S2nCleanup -> S2nCleanup
-foreign import ccall "dynamic" mk_s2n_cleanup_final :: FunPtr S2nCleanupFinal -> S2nCleanupFinal
-foreign import ccall "dynamic" mk_s2n_crypto_disable_init :: FunPtr S2nCryptoDisableInit -> S2nCryptoDisableInit
-foreign import ccall "dynamic" mk_s2n_disable_atexit :: FunPtr S2nDisableAtexit -> S2nDisableAtexit
-foreign import ccall "dynamic" mk_s2n_get_openssl_version :: FunPtr S2nGetOpensslVersion -> S2nGetOpensslVersion
-foreign import ccall "dynamic" mk_s2n_get_fips_mode :: FunPtr S2nGetFipsMode -> S2nGetFipsMode
+-- Wrappers that capture error info
+foreign import ccall "s2n_wrap_init" c_wrap_init :: FunPtr a -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_cleanup" c_wrap_cleanup :: FunPtr a -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_cleanup_final" c_wrap_cleanup_final :: FunPtr a -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_crypto_disable_init" c_wrap_crypto_disable_init :: FunPtr a -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_disable_atexit" c_wrap_disable_atexit :: FunPtr a -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_get_fips_mode" c_wrap_get_fips_mode :: FunPtr a -> Ptr S2nFipsMode -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_error_get_type" c_wrap_error_get_type :: FunPtr a -> CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO S2nErrorType
+foreign import ccall "s2n_wrap_stack_traces_enabled" c_wrap_stack_traces_enabled :: FunPtr a -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_stack_traces_enabled_set" c_wrap_stack_traces_enabled_set :: FunPtr a -> CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_calculate_stacktrace" c_wrap_calculate_stacktrace :: FunPtr a -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_free_stacktrace" c_wrap_free_stacktrace :: FunPtr a -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_get_stacktrace" c_wrap_get_stacktrace :: FunPtr a -> Ptr S2nStacktrace -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_new" c_wrap_config_new :: FunPtr a -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO (Ptr S2nConfig)
+foreign import ccall "s2n_wrap_config_new_minimal" c_wrap_config_new_minimal :: FunPtr a -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO (Ptr S2nConfig)
+foreign import ccall "s2n_wrap_config_free" c_wrap_config_free :: FunPtr a -> Ptr S2nConfig -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_free_dhparams" c_wrap_config_free_dhparams :: FunPtr a -> Ptr S2nConfig -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_free_cert_chain_and_key" c_wrap_config_free_cert_chain_and_key :: FunPtr a -> Ptr S2nConfig -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_wall_clock" c_wrap_config_set_wall_clock :: FunPtr a -> Ptr S2nConfig -> FunPtr b -> Ptr c -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_monotonic_clock" c_wrap_config_set_monotonic_clock :: FunPtr a -> Ptr S2nConfig -> FunPtr b -> Ptr c -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_cache_store_callback" c_wrap_config_set_cache_store_callback :: FunPtr a -> Ptr S2nConfig -> FunPtr b -> Ptr c -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_cache_retrieve_callback" c_wrap_config_set_cache_retrieve_callback :: FunPtr a -> Ptr S2nConfig -> FunPtr b -> Ptr c -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_cache_delete_callback" c_wrap_config_set_cache_delete_callback :: FunPtr a -> Ptr S2nConfig -> FunPtr b -> Ptr c -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_mem_set_callbacks" c_wrap_mem_set_callbacks :: FunPtr a -> FunPtr b -> FunPtr c -> FunPtr d -> FunPtr e -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_rand_set_callbacks" c_wrap_rand_set_callbacks :: FunPtr a -> FunPtr b -> FunPtr c -> FunPtr d -> FunPtr e -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_cert_chain_and_key_new" c_wrap_cert_chain_and_key_new :: FunPtr a -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO (Ptr S2nCertChainAndKey)
+foreign import ccall "s2n_wrap_cert_chain_and_key_load_pem" c_wrap_cert_chain_and_key_load_pem :: FunPtr a -> Ptr S2nCertChainAndKey -> CString -> CString -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_cert_chain_and_key_load_pem_bytes" c_wrap_cert_chain_and_key_load_pem_bytes :: FunPtr a -> Ptr S2nCertChainAndKey -> Ptr Word8 -> Word32 -> Ptr Word8 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_cert_chain_and_key_load_public_pem_bytes" c_wrap_cert_chain_and_key_load_public_pem_bytes :: FunPtr a -> Ptr S2nCertChainAndKey -> Ptr Word8 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_cert_chain_and_key_free" c_wrap_cert_chain_and_key_free :: FunPtr a -> Ptr S2nCertChainAndKey -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_cert_chain_and_key_set_ctx" c_wrap_cert_chain_and_key_set_ctx :: FunPtr a -> Ptr S2nCertChainAndKey -> Ptr b -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_cert_chain_and_key_get_private_key" c_wrap_cert_chain_and_key_get_private_key :: FunPtr a -> Ptr S2nCertChainAndKey -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO (Ptr S2nCertPrivateKey)
+foreign import ccall "s2n_wrap_cert_chain_and_key_set_ocsp_data" c_wrap_cert_chain_and_key_set_ocsp_data :: FunPtr a -> Ptr S2nCertChainAndKey -> Ptr Word8 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_cert_chain_and_key_set_sct_list" c_wrap_cert_chain_and_key_set_sct_list :: FunPtr a -> Ptr S2nCertChainAndKey -> Ptr Word8 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_cert_tiebreak_callback" c_wrap_config_set_cert_tiebreak_callback :: FunPtr a -> Ptr S2nConfig -> FunPtr b -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_add_cert_chain_and_key" c_wrap_config_add_cert_chain_and_key :: FunPtr a -> Ptr S2nConfig -> CString -> CString -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_add_cert_chain_and_key_to_store" c_wrap_config_add_cert_chain_and_key_to_store :: FunPtr a -> Ptr S2nConfig -> Ptr S2nCertChainAndKey -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_cert_chain_and_key_defaults" c_wrap_config_set_cert_chain_and_key_defaults :: FunPtr a -> Ptr S2nConfig -> Ptr (Ptr S2nCertChainAndKey) -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_verification_ca_location" c_wrap_config_set_verification_ca_location :: FunPtr a -> Ptr S2nConfig -> CString -> CString -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_add_pem_to_trust_store" c_wrap_config_add_pem_to_trust_store :: FunPtr a -> Ptr S2nConfig -> CString -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_wipe_trust_store" c_wrap_config_wipe_trust_store :: FunPtr a -> Ptr S2nConfig -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_load_system_certs" c_wrap_config_load_system_certs :: FunPtr a -> Ptr S2nConfig -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_cert_authorities_from_trust_store" c_wrap_config_set_cert_authorities_from_trust_store :: FunPtr a -> Ptr S2nConfig -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_verify_after_sign" c_wrap_config_set_verify_after_sign :: FunPtr a -> Ptr S2nConfig -> S2nVerifyAfterSign -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_check_stapled_ocsp_response" c_wrap_config_set_check_stapled_ocsp_response :: FunPtr a -> Ptr S2nConfig -> CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_disable_x509_time_verification" c_wrap_config_disable_x509_time_verification :: FunPtr a -> Ptr S2nConfig -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_disable_x509_verification" c_wrap_config_disable_x509_verification :: FunPtr a -> Ptr S2nConfig -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_max_cert_chain_depth" c_wrap_config_set_max_cert_chain_depth :: FunPtr a -> Ptr S2nConfig -> Word16 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_verify_host_callback" c_wrap_config_set_verify_host_callback :: FunPtr a -> Ptr S2nConfig -> FunPtr b -> Ptr c -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_add_dhparams" c_wrap_config_add_dhparams :: FunPtr a -> Ptr S2nConfig -> CString -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_cipher_preferences" c_wrap_config_set_cipher_preferences :: FunPtr a -> Ptr S2nConfig -> CString -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_append_protocol_preference" c_wrap_config_append_protocol_preference :: FunPtr a -> Ptr S2nConfig -> Ptr Word8 -> Word8 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_protocol_preferences" c_wrap_config_set_protocol_preferences :: FunPtr a -> Ptr S2nConfig -> Ptr CString -> CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_status_request_type" c_wrap_config_set_status_request_type :: FunPtr a -> Ptr S2nConfig -> S2nStatusRequestType -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_ct_support_level" c_wrap_config_set_ct_support_level :: FunPtr a -> Ptr S2nConfig -> S2nCtSupportLevel -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_alert_behavior" c_wrap_config_set_alert_behavior :: FunPtr a -> Ptr S2nConfig -> S2nAlertBehavior -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_extension_data" c_wrap_config_set_extension_data :: FunPtr a -> Ptr S2nConfig -> S2nTlsExtensionType -> Ptr Word8 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_send_max_fragment_length" c_wrap_config_send_max_fragment_length :: FunPtr a -> Ptr S2nConfig -> S2nMaxFragLen -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_accept_max_fragment_length" c_wrap_config_accept_max_fragment_length :: FunPtr a -> Ptr S2nConfig -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_session_state_lifetime" c_wrap_config_set_session_state_lifetime :: FunPtr a -> Ptr S2nConfig -> Word64 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_session_tickets_onoff" c_wrap_config_set_session_tickets_onoff :: FunPtr a -> Ptr S2nConfig -> Word8 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_session_cache_onoff" c_wrap_config_set_session_cache_onoff :: FunPtr a -> Ptr S2nConfig -> Word8 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_ticket_encrypt_decrypt_key_lifetime" c_wrap_config_set_ticket_encrypt_decrypt_key_lifetime :: FunPtr a -> Ptr S2nConfig -> Word64 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_ticket_decrypt_key_lifetime" c_wrap_config_set_ticket_decrypt_key_lifetime :: FunPtr a -> Ptr S2nConfig -> Word64 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_add_ticket_crypto_key" c_wrap_config_add_ticket_crypto_key :: FunPtr a -> Ptr S2nConfig -> Ptr Word8 -> Word32 -> Ptr Word8 -> Word32 -> Word64 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_require_ticket_forward_secrecy" c_wrap_config_require_ticket_forward_secrecy :: FunPtr a -> Ptr S2nConfig -> CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_send_buffer_size" c_wrap_config_set_send_buffer_size :: FunPtr a -> Ptr S2nConfig -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_recv_multi_record" c_wrap_config_set_recv_multi_record :: FunPtr a -> Ptr S2nConfig -> CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_ctx" c_wrap_config_set_ctx :: FunPtr a -> Ptr S2nConfig -> Ptr b -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_client_hello_cb" c_wrap_config_set_client_hello_cb :: FunPtr a -> Ptr S2nConfig -> FunPtr b -> Ptr c -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_client_hello_cb_mode" c_wrap_config_set_client_hello_cb_mode :: FunPtr a -> Ptr S2nConfig -> S2nClientHelloCbMode -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_max_blinding_delay" c_wrap_config_set_max_blinding_delay :: FunPtr a -> Ptr S2nConfig -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_get_client_auth_type" c_wrap_config_get_client_auth_type :: FunPtr a -> Ptr S2nConfig -> Ptr S2nCertAuthType -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_client_auth_type" c_wrap_config_set_client_auth_type :: FunPtr a -> Ptr S2nConfig -> S2nCertAuthType -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_initial_ticket_count" c_wrap_config_set_initial_ticket_count :: FunPtr a -> Ptr S2nConfig -> Word8 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_psk_mode" c_wrap_config_set_psk_mode :: FunPtr a -> Ptr S2nConfig -> S2nPskMode -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_psk_selection_callback" c_wrap_config_set_psk_selection_callback :: FunPtr a -> Ptr S2nConfig -> FunPtr b -> Ptr c -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_async_pkey_callback" c_wrap_config_set_async_pkey_callback :: FunPtr a -> Ptr S2nConfig -> FunPtr b -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_async_pkey_validation_mode" c_wrap_config_set_async_pkey_validation_mode :: FunPtr a -> Ptr S2nConfig -> S2nAsyncPkeyValidationMode -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_session_ticket_cb" c_wrap_config_set_session_ticket_cb :: FunPtr a -> Ptr S2nConfig -> FunPtr b -> Ptr c -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_key_log_cb" c_wrap_config_set_key_log_cb :: FunPtr a -> Ptr S2nConfig -> FunPtr b -> Ptr c -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_enable_cert_req_dss_legacy_compat" c_wrap_config_enable_cert_req_dss_legacy_compat :: FunPtr a -> Ptr S2nConfig -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_server_max_early_data_size" c_wrap_config_set_server_max_early_data_size :: FunPtr a -> Ptr S2nConfig -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_early_data_cb" c_wrap_config_set_early_data_cb :: FunPtr a -> Ptr S2nConfig -> FunPtr b -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_get_supported_groups" c_wrap_config_get_supported_groups :: FunPtr a -> Ptr S2nConfig -> Ptr Word16 -> Word16 -> Ptr Word16 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_config_set_serialization_version" c_wrap_config_set_serialization_version :: FunPtr a -> Ptr S2nConfig -> S2nSerializationVersion -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_new" c_wrap_connection_new :: FunPtr a -> S2nMode -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO (Ptr S2nConnection)
+foreign import ccall "s2n_wrap_connection_set_config" c_wrap_connection_set_config :: FunPtr a -> Ptr S2nConnection -> Ptr S2nConfig -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_ctx" c_wrap_connection_set_ctx :: FunPtr a -> Ptr S2nConnection -> Ptr b -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_client_hello_cb_done" c_wrap_client_hello_cb_done :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_server_name_extension_used" c_wrap_connection_server_name_extension_used :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_client_hello_parse_message" c_wrap_client_hello_parse_message :: FunPtr a -> Ptr Word8 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO (Ptr S2nClientHello)
+foreign import ccall "s2n_wrap_client_hello_free" c_wrap_client_hello_free :: FunPtr a -> Ptr (Ptr S2nClientHello) -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_client_hello_get_raw_message_length" c_wrap_client_hello_get_raw_message_length :: FunPtr a -> Ptr S2nClientHello -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CSsize
+foreign import ccall "s2n_wrap_client_hello_get_raw_message" c_wrap_client_hello_get_raw_message :: FunPtr a -> Ptr S2nClientHello -> Ptr Word8 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CSsize
+foreign import ccall "s2n_wrap_client_hello_get_cipher_suites_length" c_wrap_client_hello_get_cipher_suites_length :: FunPtr a -> Ptr S2nClientHello -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CSsize
+foreign import ccall "s2n_wrap_client_hello_get_cipher_suites" c_wrap_client_hello_get_cipher_suites :: FunPtr a -> Ptr S2nClientHello -> Ptr Word8 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CSsize
+foreign import ccall "s2n_wrap_client_hello_get_extensions_length" c_wrap_client_hello_get_extensions_length :: FunPtr a -> Ptr S2nClientHello -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CSsize
+foreign import ccall "s2n_wrap_client_hello_get_extensions" c_wrap_client_hello_get_extensions :: FunPtr a -> Ptr S2nClientHello -> Ptr Word8 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CSsize
+foreign import ccall "s2n_wrap_client_hello_get_extension_length" c_wrap_client_hello_get_extension_length :: FunPtr a -> Ptr S2nClientHello -> S2nTlsExtensionType -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CSsize
+foreign import ccall "s2n_wrap_client_hello_get_extension_by_id" c_wrap_client_hello_get_extension_by_id :: FunPtr a -> Ptr S2nClientHello -> S2nTlsExtensionType -> Ptr Word8 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CSsize
+foreign import ccall "s2n_wrap_client_hello_has_extension" c_wrap_client_hello_has_extension :: FunPtr a -> Ptr S2nClientHello -> Word16 -> Ptr CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_client_hello_get_session_id_length" c_wrap_client_hello_get_session_id_length :: FunPtr a -> Ptr S2nClientHello -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_client_hello_get_session_id" c_wrap_client_hello_get_session_id :: FunPtr a -> Ptr S2nClientHello -> Ptr Word8 -> Ptr Word32 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_client_hello_get_compression_methods_length" c_wrap_client_hello_get_compression_methods_length :: FunPtr a -> Ptr S2nClientHello -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_client_hello_get_compression_methods" c_wrap_client_hello_get_compression_methods :: FunPtr a -> Ptr S2nClientHello -> Ptr Word8 -> Word32 -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_client_hello_get_legacy_protocol_version" c_wrap_client_hello_get_legacy_protocol_version :: FunPtr a -> Ptr S2nClientHello -> Ptr Word8 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_client_hello_get_supported_groups" c_wrap_client_hello_get_supported_groups :: FunPtr a -> Ptr S2nClientHello -> Ptr Word16 -> Word16 -> Ptr Word16 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_client_hello_get_server_name_length" c_wrap_client_hello_get_server_name_length :: FunPtr a -> Ptr S2nClientHello -> Ptr Word16 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_client_hello_get_server_name" c_wrap_client_hello_get_server_name :: FunPtr a -> Ptr S2nClientHello -> Ptr Word8 -> Word16 -> Ptr Word16 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_client_hello_get_legacy_record_version" c_wrap_client_hello_get_legacy_record_version :: FunPtr a -> Ptr S2nClientHello -> Ptr Word8 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_fd" c_wrap_connection_set_fd :: FunPtr a -> Ptr S2nConnection -> CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_read_fd" c_wrap_connection_set_read_fd :: FunPtr a -> Ptr S2nConnection -> CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_write_fd" c_wrap_connection_set_write_fd :: FunPtr a -> Ptr S2nConnection -> CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_read_fd" c_wrap_connection_get_read_fd :: FunPtr a -> Ptr S2nConnection -> Ptr CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_write_fd" c_wrap_connection_get_write_fd :: FunPtr a -> Ptr S2nConnection -> Ptr CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_use_corked_io" c_wrap_connection_use_corked_io :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_recv_ctx" c_wrap_connection_set_recv_ctx :: FunPtr a -> Ptr S2nConnection -> Ptr b -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_send_ctx" c_wrap_connection_set_send_ctx :: FunPtr a -> Ptr S2nConnection -> Ptr b -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_recv_cb" c_wrap_connection_set_recv_cb :: FunPtr a -> Ptr S2nConnection -> FunPtr b -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_send_cb" c_wrap_connection_set_send_cb :: FunPtr a -> Ptr S2nConnection -> FunPtr b -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_prefer_throughput" c_wrap_connection_prefer_throughput :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_prefer_low_latency" c_wrap_connection_prefer_low_latency :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_recv_buffering" c_wrap_connection_set_recv_buffering :: FunPtr a -> Ptr S2nConnection -> CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_peek_buffered" c_wrap_peek_buffered :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO Word32
+foreign import ccall "s2n_wrap_connection_set_dynamic_buffers" c_wrap_connection_set_dynamic_buffers :: FunPtr a -> Ptr S2nConnection -> CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_dynamic_record_threshold" c_wrap_connection_set_dynamic_record_threshold :: FunPtr a -> Ptr S2nConnection -> Word32 -> Word16 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_verify_host_callback" c_wrap_connection_set_verify_host_callback :: FunPtr a -> Ptr S2nConnection -> FunPtr b -> Ptr c -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_blinding" c_wrap_connection_set_blinding :: FunPtr a -> Ptr S2nConnection -> S2nBlinding -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_cipher_preferences" c_wrap_connection_set_cipher_preferences :: FunPtr a -> Ptr S2nConnection -> CString -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_request_key_update" c_wrap_connection_request_key_update :: FunPtr a -> Ptr S2nConnection -> S2nPeerKeyUpdate -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_append_protocol_preference" c_wrap_connection_append_protocol_preference :: FunPtr a -> Ptr S2nConnection -> Ptr Word8 -> Word8 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_protocol_preferences" c_wrap_connection_set_protocol_preferences :: FunPtr a -> Ptr S2nConnection -> Ptr CString -> CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_set_server_name" c_wrap_set_server_name :: FunPtr a -> Ptr S2nConnection -> CString -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_ocsp_response" c_wrap_connection_get_ocsp_response :: FunPtr a -> Ptr S2nConnection -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO (Ptr Word8)
+foreign import ccall "s2n_wrap_connection_get_sct_list" c_wrap_connection_get_sct_list :: FunPtr a -> Ptr S2nConnection -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO (Ptr Word8)
+foreign import ccall "s2n_wrap_negotiate" c_wrap_negotiate :: FunPtr a -> Ptr S2nConnection -> Ptr S2nBlockedStatus -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_send" c_wrap_send :: FunPtr a -> Ptr S2nConnection -> Ptr b -> CSsize -> Ptr S2nBlockedStatus -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CSsize
+foreign import ccall "s2n_wrap_recv" c_wrap_recv :: FunPtr a -> Ptr S2nConnection -> Ptr b -> CSsize -> Ptr S2nBlockedStatus -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CSsize
+foreign import ccall "s2n_wrap_peek" c_wrap_peek :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_free_handshake" c_wrap_connection_free_handshake :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_release_buffers" c_wrap_connection_release_buffers :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_wipe" c_wrap_connection_wipe :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_free" c_wrap_connection_free :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_shutdown" c_wrap_shutdown :: FunPtr a -> Ptr S2nConnection -> Ptr S2nBlockedStatus -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_shutdown_send" c_wrap_shutdown_send :: FunPtr a -> Ptr S2nConnection -> Ptr S2nBlockedStatus -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_client_auth_type" c_wrap_connection_get_client_auth_type :: FunPtr a -> Ptr S2nConnection -> Ptr S2nCertAuthType -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_client_auth_type" c_wrap_connection_set_client_auth_type :: FunPtr a -> Ptr S2nConnection -> S2nCertAuthType -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_client_cert_chain" c_wrap_connection_get_client_cert_chain :: FunPtr a -> Ptr S2nConnection -> Ptr (Ptr Word8) -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_client_cert_used" c_wrap_connection_client_cert_used :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_add_new_tickets_to_send" c_wrap_connection_add_new_tickets_to_send :: FunPtr a -> Ptr S2nConnection -> Word8 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_tickets_sent" c_wrap_connection_get_tickets_sent :: FunPtr a -> Ptr S2nConnection -> Ptr Word16 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_server_keying_material_lifetime" c_wrap_connection_set_server_keying_material_lifetime :: FunPtr a -> Ptr S2nConnection -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_session_ticket_get_data_len" c_wrap_session_ticket_get_data_len :: FunPtr a -> Ptr S2nSessionTicket -> Ptr CSize -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_session_ticket_get_data" c_wrap_session_ticket_get_data :: FunPtr a -> Ptr S2nSessionTicket -> CSize -> Ptr Word8 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_session_ticket_get_lifetime" c_wrap_session_ticket_get_lifetime :: FunPtr a -> Ptr S2nSessionTicket -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_session" c_wrap_connection_set_session :: FunPtr a -> Ptr S2nConnection -> Ptr b -> CSize -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_session" c_wrap_connection_get_session :: FunPtr a -> Ptr S2nConnection -> Ptr b -> CSize -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_session_ticket_lifetime_hint" c_wrap_connection_get_session_ticket_lifetime_hint :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_session_length" c_wrap_connection_get_session_length :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_session_id_length" c_wrap_connection_get_session_id_length :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_session_id" c_wrap_connection_get_session_id :: FunPtr a -> Ptr S2nConnection -> Ptr b -> CSize -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_is_session_resumed" c_wrap_connection_is_session_resumed :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_is_ocsp_stapled" c_wrap_connection_is_ocsp_stapled :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_selected_signature_algorithm" c_wrap_connection_get_selected_signature_algorithm :: FunPtr a -> Ptr S2nConnection -> Ptr S2nTlsSignatureAlgorithm -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_selected_digest_algorithm" c_wrap_connection_get_selected_digest_algorithm :: FunPtr a -> Ptr S2nConnection -> Ptr S2nTlsHashAlgorithm -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_selected_client_cert_signature_algorithm" c_wrap_connection_get_selected_client_cert_signature_algorithm :: FunPtr a -> Ptr S2nConnection -> Ptr S2nTlsSignatureAlgorithm -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_selected_client_cert_digest_algorithm" c_wrap_connection_get_selected_client_cert_digest_algorithm :: FunPtr a -> Ptr S2nConnection -> Ptr S2nTlsHashAlgorithm -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_selected_cert" c_wrap_connection_get_selected_cert :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO (Ptr S2nCertChainAndKey)
+foreign import ccall "s2n_wrap_cert_chain_get_length" c_wrap_cert_chain_get_length :: FunPtr a -> Ptr S2nCertChainAndKey -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_cert_chain_get_cert" c_wrap_cert_chain_get_cert :: FunPtr a -> Ptr S2nCertChainAndKey -> Ptr (Ptr S2nCert) -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_cert_get_der" c_wrap_cert_get_der :: FunPtr a -> Ptr S2nCert -> Ptr (Ptr Word8) -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_peer_cert_chain" c_wrap_connection_get_peer_cert_chain :: FunPtr a -> Ptr S2nConnection -> Ptr S2nCertChainAndKey -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_cert_get_x509_extension_value_length" c_wrap_cert_get_x509_extension_value_length :: FunPtr a -> Ptr S2nCert -> Ptr Word8 -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_cert_get_x509_extension_value" c_wrap_cert_get_x509_extension_value :: FunPtr a -> Ptr S2nCert -> Ptr Word8 -> Ptr Word8 -> Ptr Word32 -> Ptr CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_cert_get_utf8_string_from_extension_data_length" c_wrap_cert_get_utf8_string_from_extension_data_length :: FunPtr a -> Ptr Word8 -> Word32 -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_cert_get_utf8_string_from_extension_data" c_wrap_cert_get_utf8_string_from_extension_data :: FunPtr a -> Ptr Word8 -> Word32 -> Ptr Word8 -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_external_psk_new" c_wrap_external_psk_new :: FunPtr a -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO (Ptr S2nPsk)
+foreign import ccall "s2n_wrap_psk_free" c_wrap_psk_free :: FunPtr a -> Ptr (Ptr S2nPsk) -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_psk_set_identity" c_wrap_psk_set_identity :: FunPtr a -> Ptr S2nPsk -> Ptr Word8 -> Word16 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_psk_set_secret" c_wrap_psk_set_secret :: FunPtr a -> Ptr S2nPsk -> Ptr Word8 -> Word16 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_psk_set_hmac" c_wrap_psk_set_hmac :: FunPtr a -> Ptr S2nPsk -> S2nPskHmac -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_append_psk" c_wrap_connection_append_psk :: FunPtr a -> Ptr S2nConnection -> Ptr S2nPsk -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_psk_mode" c_wrap_connection_set_psk_mode :: FunPtr a -> Ptr S2nConnection -> S2nPskMode -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_negotiated_psk_identity_length" c_wrap_connection_get_negotiated_psk_identity_length :: FunPtr a -> Ptr S2nConnection -> Ptr Word16 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_negotiated_psk_identity" c_wrap_connection_get_negotiated_psk_identity :: FunPtr a -> Ptr S2nConnection -> Ptr Word8 -> Word16 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_offered_psk_new" c_wrap_offered_psk_new :: FunPtr a -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO (Ptr S2nOfferedPsk)
+foreign import ccall "s2n_wrap_offered_psk_free" c_wrap_offered_psk_free :: FunPtr a -> Ptr (Ptr S2nOfferedPsk) -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_offered_psk_get_identity" c_wrap_offered_psk_get_identity :: FunPtr a -> Ptr S2nOfferedPsk -> Ptr (Ptr Word8) -> Ptr Word16 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_offered_psk_list_has_next" c_wrap_offered_psk_list_has_next :: FunPtr a -> Ptr S2nOfferedPskList -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_offered_psk_list_next" c_wrap_offered_psk_list_next :: FunPtr a -> Ptr S2nOfferedPskList -> Ptr S2nOfferedPsk -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_offered_psk_list_reread" c_wrap_offered_psk_list_reread :: FunPtr a -> Ptr S2nOfferedPskList -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_offered_psk_list_choose_psk" c_wrap_offered_psk_list_choose_psk :: FunPtr a -> Ptr S2nOfferedPskList -> Ptr S2nOfferedPsk -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_psk_configure_early_data" c_wrap_psk_configure_early_data :: FunPtr a -> Ptr S2nPsk -> Word32 -> Word8 -> Word8 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_psk_set_application_protocol" c_wrap_psk_set_application_protocol :: FunPtr a -> Ptr S2nPsk -> Ptr Word8 -> Word8 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_psk_set_early_data_context" c_wrap_psk_set_early_data_context :: FunPtr a -> Ptr S2nPsk -> Ptr Word8 -> Word16 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_client_protocol_version" c_wrap_connection_get_client_protocol_version :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_server_protocol_version" c_wrap_connection_get_server_protocol_version :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_actual_protocol_version" c_wrap_connection_get_actual_protocol_version :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_client_hello_version" c_wrap_connection_get_client_hello_version :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_certificate_match" c_wrap_connection_get_certificate_match :: FunPtr a -> Ptr S2nConnection -> Ptr S2nCertSniMatch -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_master_secret" c_wrap_connection_get_master_secret :: FunPtr a -> Ptr S2nConnection -> Ptr b -> CSize -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_tls_exporter" c_wrap_connection_tls_exporter :: FunPtr a -> Ptr S2nConnection -> Ptr Word8 -> Word32 -> Ptr Word8 -> Word32 -> Ptr Word8 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_cipher_iana_value" c_wrap_connection_get_cipher_iana_value :: FunPtr a -> Ptr S2nConnection -> Ptr b -> Ptr c -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_is_valid_for_cipher_preferences" c_wrap_connection_is_valid_for_cipher_preferences :: FunPtr a -> Ptr S2nConnection -> CString -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_alert" c_wrap_connection_get_alert :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_async_pkey_op_perform" c_wrap_async_pkey_op_perform :: FunPtr a -> Ptr S2nAsyncPkeyOp -> Ptr S2nCertPrivateKey -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_async_pkey_op_apply" c_wrap_async_pkey_op_apply :: FunPtr a -> Ptr S2nAsyncPkeyOp -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_async_pkey_op_free" c_wrap_async_pkey_op_free :: FunPtr a -> Ptr S2nAsyncPkeyOp -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_async_pkey_op_get_op_type" c_wrap_async_pkey_op_get_op_type :: FunPtr a -> Ptr S2nAsyncPkeyOp -> Ptr S2nAsyncPkeyOpType -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_async_pkey_op_get_input_size" c_wrap_async_pkey_op_get_input_size :: FunPtr a -> Ptr S2nAsyncPkeyOp -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_async_pkey_op_get_input" c_wrap_async_pkey_op_get_input :: FunPtr a -> Ptr S2nAsyncPkeyOp -> Ptr Word8 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_async_pkey_op_set_output" c_wrap_async_pkey_op_set_output :: FunPtr a -> Ptr S2nAsyncPkeyOp -> Ptr Word8 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_server_max_early_data_size" c_wrap_connection_set_server_max_early_data_size :: FunPtr a -> Ptr S2nConnection -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_set_server_early_data_context" c_wrap_connection_set_server_early_data_context :: FunPtr a -> Ptr S2nConnection -> Ptr Word8 -> Word16 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_early_data_status" c_wrap_connection_get_early_data_status :: FunPtr a -> Ptr S2nConnection -> Ptr S2nEarlyDataStatus -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_remaining_early_data_size" c_wrap_connection_get_remaining_early_data_size :: FunPtr a -> Ptr S2nConnection -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_max_early_data_size" c_wrap_connection_get_max_early_data_size :: FunPtr a -> Ptr S2nConnection -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_send_early_data" c_wrap_send_early_data :: FunPtr a -> Ptr S2nConnection -> Ptr Word8 -> CSsize -> Ptr CSsize -> Ptr S2nBlockedStatus -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_recv_early_data" c_wrap_recv_early_data :: FunPtr a -> Ptr S2nConnection -> Ptr Word8 -> CSsize -> Ptr CSsize -> Ptr S2nBlockedStatus -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_offered_early_data_get_context_length" c_wrap_offered_early_data_get_context_length :: FunPtr a -> Ptr S2nOfferedEarlyData -> Ptr Word16 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_offered_early_data_get_context" c_wrap_offered_early_data_get_context :: FunPtr a -> Ptr S2nOfferedEarlyData -> Ptr Word8 -> Word16 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_offered_early_data_reject" c_wrap_offered_early_data_reject :: FunPtr a -> Ptr S2nOfferedEarlyData -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_offered_early_data_accept" c_wrap_offered_early_data_accept :: FunPtr a -> Ptr S2nOfferedEarlyData -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_serialization_length" c_wrap_connection_serialization_length :: FunPtr a -> Ptr S2nConnection -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_serialize" c_wrap_connection_serialize :: FunPtr a -> Ptr S2nConnection -> Ptr Word8 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_deserialize" c_wrap_connection_deserialize :: FunPtr a -> Ptr S2nConnection -> Ptr Word8 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_cert_chain_and_key_get_ctx" c_wrap_cert_chain_and_key_get_ctx :: FunPtr a -> Ptr S2nCertChainAndKey -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO (Ptr b)
+foreign import ccall "s2n_wrap_config_get_ctx" c_wrap_config_get_ctx :: FunPtr a -> Ptr S2nConfig -> Ptr (Ptr b) -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_ctx" c_wrap_connection_get_ctx :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO (Ptr b)
+foreign import ccall "s2n_wrap_connection_get_client_hello" c_wrap_connection_get_client_hello :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO (Ptr S2nClientHello)
+foreign import ccall "s2n_wrap_get_server_name" c_wrap_get_server_name :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CString
+foreign import ccall "s2n_wrap_get_application_protocol" c_wrap_get_application_protocol :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CString
+foreign import ccall "s2n_wrap_connection_get_cipher" c_wrap_connection_get_cipher :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CString
+foreign import ccall "s2n_wrap_connection_get_curve" c_wrap_connection_get_curve :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CString
+foreign import ccall "s2n_wrap_connection_get_kem_name" c_wrap_connection_get_kem_name :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CString
+foreign import ccall "s2n_wrap_connection_get_kem_group_name" c_wrap_connection_get_kem_group_name :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CString
+foreign import ccall "s2n_wrap_connection_get_key_exchange_group" c_wrap_connection_get_key_exchange_group :: FunPtr a -> Ptr S2nConnection -> Ptr CString -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall "s2n_wrap_connection_get_handshake_type_name" c_wrap_connection_get_handshake_type_name :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CString
+foreign import ccall "s2n_wrap_connection_get_last_message_name" c_wrap_connection_get_last_message_name :: FunPtr a -> Ptr S2nConnection -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CString
 
--- Error Handling
-foreign import ccall "dynamic" mk_s2n_errno_location :: FunPtr S2nErrnoLocation -> S2nErrnoLocation
-foreign import ccall "dynamic" mk_s2n_error_get_type :: FunPtr S2nErrorGetType -> S2nErrorGetType
-foreign import ccall "dynamic" mk_s2n_strerror :: FunPtr S2nStrerror -> S2nStrerror
-foreign import ccall "dynamic" mk_s2n_strerror_debug :: FunPtr S2nStrerrorDebug -> S2nStrerrorDebug
-foreign import ccall "dynamic" mk_s2n_strerror_name :: FunPtr S2nStrerrorName -> S2nStrerrorName
-foreign import ccall "dynamic" mk_s2n_strerror_source :: FunPtr S2nStrerrorSource -> S2nStrerrorSource
+--------------------------------------------------------------------------------
+-- Dynamic wrappers for functions that don't need error capture
+--------------------------------------------------------------------------------
 
--- Stack Traces
-foreign import ccall "dynamic" mk_s2n_stack_traces_enabled :: FunPtr S2nStackTracesEnabled -> S2nStackTracesEnabled
-foreign import ccall "dynamic" mk_s2n_stack_traces_enabled_set :: FunPtr S2nStackTracesEnabledSet -> S2nStackTracesEnabledSet
-foreign import ccall "dynamic" mk_s2n_calculate_stacktrace :: FunPtr S2nCalculateStacktrace -> S2nCalculateStacktrace
-foreign import ccall "dynamic" mk_s2n_free_stacktrace :: FunPtr S2nFreeStacktrace -> S2nFreeStacktrace
-foreign import ccall "dynamic" mk_s2n_get_stacktrace :: FunPtr S2nGetStacktrace -> S2nGetStacktrace
-
--- Config Management
-foreign import ccall "dynamic" mk_s2n_config_new :: FunPtr S2nConfigNew -> S2nConfigNew
-foreign import ccall "dynamic" mk_s2n_config_new_minimal :: FunPtr S2nConfigNewMinimal -> S2nConfigNewMinimal
-foreign import ccall "dynamic" mk_s2n_config_free :: FunPtr S2nConfigFree -> S2nConfigFree
-foreign import ccall "dynamic" mk_s2n_config_free_dhparams :: FunPtr S2nConfigFreeDhparams -> S2nConfigFreeDhparams
-foreign import ccall "dynamic" mk_s2n_config_free_cert_chain_and_key :: FunPtr S2nConfigFreeCertChainAndKey -> S2nConfigFreeCertChainAndKey
-foreign import ccall "dynamic" mk_s2n_config_set_wall_clock :: FunPtr S2nConfigSetWallClock -> S2nConfigSetWallClock
-foreign import ccall "dynamic" mk_s2n_config_set_monotonic_clock :: FunPtr S2nConfigSetMonotonicClock -> S2nConfigSetMonotonicClock
-
--- Cache Callbacks
-foreign import ccall "dynamic" mk_s2n_config_set_cache_store_callback :: FunPtr S2nConfigSetCacheStoreCallback -> S2nConfigSetCacheStoreCallback
-foreign import ccall "dynamic" mk_s2n_config_set_cache_retrieve_callback :: FunPtr S2nConfigSetCacheRetrieveCallback -> S2nConfigSetCacheRetrieveCallback
-foreign import ccall "dynamic" mk_s2n_config_set_cache_delete_callback :: FunPtr S2nConfigSetCacheDeleteCallback -> S2nConfigSetCacheDeleteCallback
-
--- Memory & Random Callbacks
-foreign import ccall "dynamic" mk_s2n_mem_set_callbacks :: FunPtr S2nMemSetCallbacks -> S2nMemSetCallbacks
-foreign import ccall "dynamic" mk_s2n_rand_set_callbacks :: FunPtr S2nRandSetCallbacks -> S2nRandSetCallbacks
-
--- Certificate Chain Management
-foreign import ccall "dynamic" mk_s2n_cert_chain_and_key_new :: FunPtr S2nCertChainAndKeyNew -> S2nCertChainAndKeyNew
-foreign import ccall "dynamic" mk_s2n_cert_chain_and_key_load_pem :: FunPtr S2nCertChainAndKeyLoadPem -> S2nCertChainAndKeyLoadPem
-foreign import ccall "dynamic" mk_s2n_cert_chain_and_key_load_pem_bytes :: FunPtr S2nCertChainAndKeyLoadPemBytes -> S2nCertChainAndKeyLoadPemBytes
-foreign import ccall "dynamic" mk_s2n_cert_chain_and_key_load_public_pem_bytes :: FunPtr S2nCertChainAndKeyLoadPublicPemBytes -> S2nCertChainAndKeyLoadPublicPemBytes
-foreign import ccall "dynamic" mk_s2n_cert_chain_and_key_free :: FunPtr S2nCertChainAndKeyFree -> S2nCertChainAndKeyFree
-foreign import ccall "dynamic" mk_s2n_cert_chain_and_key_set_ctx :: FunPtr S2nCertChainAndKeySetCtx -> S2nCertChainAndKeySetCtx
-foreign import ccall "dynamic" mk_s2n_cert_chain_and_key_get_ctx :: FunPtr S2nCertChainAndKeyGetCtx -> S2nCertChainAndKeyGetCtx
-foreign import ccall "dynamic" mk_s2n_cert_chain_and_key_get_private_key :: FunPtr S2nCertChainAndKeyGetPrivateKey -> S2nCertChainAndKeyGetPrivateKey
-foreign import ccall "dynamic" mk_s2n_cert_chain_and_key_set_ocsp_data :: FunPtr S2nCertChainAndKeySetOcspData -> S2nCertChainAndKeySetOcspData
-foreign import ccall "dynamic" mk_s2n_cert_chain_and_key_set_sct_list :: FunPtr S2nCertChainAndKeySetSctList -> S2nCertChainAndKeySetSctList
-foreign import ccall "dynamic" mk_s2n_config_set_cert_tiebreak_callback :: FunPtr S2nConfigSetCertTiebreakCallback -> S2nConfigSetCertTiebreakCallback
-foreign import ccall "dynamic" mk_s2n_config_add_cert_chain_and_key :: FunPtr S2nConfigAddCertChainAndKey -> S2nConfigAddCertChainAndKey
-foreign import ccall "dynamic" mk_s2n_config_add_cert_chain_and_key_to_store :: FunPtr S2nConfigAddCertChainAndKeyToStore -> S2nConfigAddCertChainAndKeyToStore
-foreign import ccall "dynamic" mk_s2n_config_set_cert_chain_and_key_defaults :: FunPtr S2nConfigSetCertChainAndKeyDefaults -> S2nConfigSetCertChainAndKeyDefaults
-
--- Trust Store
-foreign import ccall "dynamic" mk_s2n_config_set_verification_ca_location :: FunPtr S2nConfigSetVerificationCaLocation -> S2nConfigSetVerificationCaLocation
-foreign import ccall "dynamic" mk_s2n_config_add_pem_to_trust_store :: FunPtr S2nConfigAddPemToTrustStore -> S2nConfigAddPemToTrustStore
-foreign import ccall "dynamic" mk_s2n_config_wipe_trust_store :: FunPtr S2nConfigWipeTrustStore -> S2nConfigWipeTrustStore
-foreign import ccall "dynamic" mk_s2n_config_load_system_certs :: FunPtr S2nConfigLoadSystemCerts -> S2nConfigLoadSystemCerts
-foreign import ccall "dynamic" mk_s2n_config_set_cert_authorities_from_trust_store :: FunPtr S2nConfigSetCertAuthoritiesFromTrustStore -> S2nConfigSetCertAuthoritiesFromTrustStore
-
--- Verification & Validation
-foreign import ccall "dynamic" mk_s2n_config_set_verify_after_sign :: FunPtr S2nConfigSetVerifyAfterSign -> S2nConfigSetVerifyAfterSign
-foreign import ccall "dynamic" mk_s2n_config_set_check_stapled_ocsp_response :: FunPtr S2nConfigSetCheckStapledOcspResponse -> S2nConfigSetCheckStapledOcspResponse
-foreign import ccall "dynamic" mk_s2n_config_disable_x509_time_verification :: FunPtr S2nConfigDisableX509TimeVerification -> S2nConfigDisableX509TimeVerification
-foreign import ccall "dynamic" mk_s2n_config_disable_x509_intent_verification :: FunPtr S2nConfigDisableX509IntentVerification -> S2nConfigDisableX509IntentVerification
-foreign import ccall "dynamic" mk_s2n_config_disable_x509_verification :: FunPtr S2nConfigDisableX509Verification -> S2nConfigDisableX509Verification
-foreign import ccall "dynamic" mk_s2n_config_set_max_cert_chain_depth :: FunPtr S2nConfigSetMaxCertChainDepth -> S2nConfigSetMaxCertChainDepth
-foreign import ccall "dynamic" mk_s2n_config_set_verify_host_callback :: FunPtr S2nConfigSetVerifyHostCallback -> S2nConfigSetVerifyHostCallback
-
--- DH Parameters
-foreign import ccall "dynamic" mk_s2n_config_add_dhparams :: FunPtr S2nConfigAddDhparams -> S2nConfigAddDhparams
-
--- Security Policies & Preferences
-foreign import ccall "dynamic" mk_s2n_config_set_cipher_preferences :: FunPtr S2nConfigSetCipherPreferences -> S2nConfigSetCipherPreferences
-foreign import ccall "dynamic" mk_s2n_config_append_protocol_preference :: FunPtr S2nConfigAppendProtocolPreference -> S2nConfigAppendProtocolPreference
-foreign import ccall "dynamic" mk_s2n_config_set_protocol_preferences :: FunPtr S2nConfigSetProtocolPreferences -> S2nConfigSetProtocolPreferences
-foreign import ccall "dynamic" mk_s2n_config_set_status_request_type :: FunPtr S2nConfigSetStatusRequestType -> S2nConfigSetStatusRequestType
-foreign import ccall "dynamic" mk_s2n_config_set_ct_support_level :: FunPtr S2nConfigSetCtSupportLevel -> S2nConfigSetCtSupportLevel
-foreign import ccall "dynamic" mk_s2n_config_set_alert_behavior :: FunPtr S2nConfigSetAlertBehavior -> S2nConfigSetAlertBehavior
-
--- Extension Data
-foreign import ccall "dynamic" mk_s2n_config_set_extension_data :: FunPtr S2nConfigSetExtensionData -> S2nConfigSetExtensionData
-foreign import ccall "dynamic" mk_s2n_config_send_max_fragment_length :: FunPtr S2nConfigSendMaxFragmentLength -> S2nConfigSendMaxFragmentLength
-foreign import ccall "dynamic" mk_s2n_config_accept_max_fragment_length :: FunPtr S2nConfigAcceptMaxFragmentLength -> S2nConfigAcceptMaxFragmentLength
-
--- Session & Ticket Configuration
-foreign import ccall "dynamic" mk_s2n_config_set_session_state_lifetime :: FunPtr S2nConfigSetSessionStateLifetime -> S2nConfigSetSessionStateLifetime
-foreign import ccall "dynamic" mk_s2n_config_set_session_tickets_onoff :: FunPtr S2nConfigSetSessionTicketsOnoff -> S2nConfigSetSessionTicketsOnoff
-foreign import ccall "dynamic" mk_s2n_config_set_session_cache_onoff :: FunPtr S2nConfigSetSessionCacheOnoff -> S2nConfigSetSessionCacheOnoff
-foreign import ccall "dynamic" mk_s2n_config_set_ticket_encrypt_decrypt_key_lifetime :: FunPtr S2nConfigSetTicketEncryptDecryptKeyLifetime -> S2nConfigSetTicketEncryptDecryptKeyLifetime
-foreign import ccall "dynamic" mk_s2n_config_set_ticket_decrypt_key_lifetime :: FunPtr S2nConfigSetTicketDecryptKeyLifetime -> S2nConfigSetTicketDecryptKeyLifetime
-foreign import ccall "dynamic" mk_s2n_config_add_ticket_crypto_key :: FunPtr S2nConfigAddTicketCryptoKey -> S2nConfigAddTicketCryptoKey
-foreign import ccall "dynamic" mk_s2n_config_require_ticket_forward_secrecy :: FunPtr S2nConfigRequireTicketForwardSecrecy -> S2nConfigRequireTicketForwardSecrecy
-
--- Buffer & I/O Configuration
-foreign import ccall "dynamic" mk_s2n_config_set_send_buffer_size :: FunPtr S2nConfigSetSendBufferSize -> S2nConfigSetSendBufferSize
-foreign import ccall "dynamic" mk_s2n_config_set_recv_multi_record :: FunPtr S2nConfigSetRecvMultiRecord -> S2nConfigSetRecvMultiRecord
-
--- Miscellaneous Config
-foreign import ccall "dynamic" mk_s2n_config_set_ctx :: FunPtr S2nConfigSetCtx -> S2nConfigSetCtx
-foreign import ccall "dynamic" mk_s2n_config_get_ctx :: FunPtr S2nConfigGetCtx -> S2nConfigGetCtx
-foreign import ccall "dynamic" mk_s2n_config_set_client_hello_cb :: FunPtr S2nConfigSetClientHelloCb -> S2nConfigSetClientHelloCb
-foreign import ccall "dynamic" mk_s2n_config_set_client_hello_cb_mode :: FunPtr S2nConfigSetClientHelloCbMode -> S2nConfigSetClientHelloCbMode
-foreign import ccall "dynamic" mk_s2n_config_set_max_blinding_delay :: FunPtr S2nConfigSetMaxBlindingDelay -> S2nConfigSetMaxBlindingDelay
-foreign import ccall "dynamic" mk_s2n_config_get_client_auth_type :: FunPtr S2nConfigGetClientAuthType -> S2nConfigGetClientAuthType
-foreign import ccall "dynamic" mk_s2n_config_set_client_auth_type :: FunPtr S2nConfigSetClientAuthType -> S2nConfigSetClientAuthType
-foreign import ccall "dynamic" mk_s2n_config_set_initial_ticket_count :: FunPtr S2nConfigSetInitialTicketCount -> S2nConfigSetInitialTicketCount
-foreign import ccall "dynamic" mk_s2n_config_set_psk_mode :: FunPtr S2nConfigSetPskMode -> S2nConfigSetPskMode
-foreign import ccall "dynamic" mk_s2n_config_set_psk_selection_callback :: FunPtr S2nConfigSetPskSelectionCallback -> S2nConfigSetPskSelectionCallback
-foreign import ccall "dynamic" mk_s2n_config_set_async_pkey_callback :: FunPtr S2nConfigSetAsyncPkeyCallback -> S2nConfigSetAsyncPkeyCallback
-foreign import ccall "dynamic" mk_s2n_config_set_async_pkey_validation_mode :: FunPtr S2nConfigSetAsyncPkeyValidationMode -> S2nConfigSetAsyncPkeyValidationMode
-foreign import ccall "dynamic" mk_s2n_config_set_session_ticket_cb :: FunPtr S2nConfigSetSessionTicketCb -> S2nConfigSetSessionTicketCb
-foreign import ccall "dynamic" mk_s2n_config_set_key_log_cb :: FunPtr S2nConfigSetKeyLogCb -> S2nConfigSetKeyLogCb
-foreign import ccall "dynamic" mk_s2n_config_enable_cert_req_dss_legacy_compat :: FunPtr S2nConfigEnableCertReqDssLegacyCompat -> S2nConfigEnableCertReqDssLegacyCompat
-foreign import ccall "dynamic" mk_s2n_config_set_server_max_early_data_size :: FunPtr S2nConfigSetServerMaxEarlyDataSize -> S2nConfigSetServerMaxEarlyDataSize
-foreign import ccall "dynamic" mk_s2n_config_set_early_data_cb :: FunPtr S2nConfigSetEarlyDataCb -> S2nConfigSetEarlyDataCb
-foreign import ccall "dynamic" mk_s2n_config_get_supported_groups :: FunPtr S2nConfigGetSupportedGroups -> S2nConfigGetSupportedGroups
-foreign import ccall "dynamic" mk_s2n_config_set_serialization_version :: FunPtr S2nConfigSetSerializationVersion -> S2nConfigSetSerializationVersion
-
--- Connection Creation & Management
-foreign import ccall "dynamic" mk_s2n_connection_new :: FunPtr S2nConnectionNew -> S2nConnectionNew
-foreign import ccall "dynamic" mk_s2n_connection_set_config :: FunPtr S2nConnectionSetConfig -> S2nConnectionSetConfig
-foreign import ccall "dynamic" mk_s2n_connection_set_ctx :: FunPtr S2nConnectionSetCtx -> S2nConnectionSetCtx
-foreign import ccall "dynamic" mk_s2n_connection_get_ctx :: FunPtr S2nConnectionGetCtx -> S2nConnectionGetCtx
-foreign import ccall "dynamic" mk_s2n_client_hello_cb_done :: FunPtr S2nClientHelloCbDone -> S2nClientHelloCbDone
-foreign import ccall "dynamic" mk_s2n_connection_server_name_extension_used :: FunPtr S2nConnectionServerNameExtensionUsed -> S2nConnectionServerNameExtensionUsed
-
--- Client Hello Access
-foreign import ccall "dynamic" mk_s2n_connection_get_client_hello :: FunPtr S2nConnectionGetClientHello -> S2nConnectionGetClientHello
-foreign import ccall "dynamic" mk_s2n_client_hello_parse_message :: FunPtr S2nClientHelloParseMessage -> S2nClientHelloParseMessage
-foreign import ccall "dynamic" mk_s2n_client_hello_free :: FunPtr S2nClientHelloFree -> S2nClientHelloFree
-foreign import ccall "dynamic" mk_s2n_client_hello_get_raw_message_length :: FunPtr S2nClientHelloGetRawMessageLength -> S2nClientHelloGetRawMessageLength
-foreign import ccall "dynamic" mk_s2n_client_hello_get_raw_message :: FunPtr S2nClientHelloGetRawMessage -> S2nClientHelloGetRawMessage
-foreign import ccall "dynamic" mk_s2n_client_hello_get_cipher_suites_length :: FunPtr S2nClientHelloGetCipherSuitesLength -> S2nClientHelloGetCipherSuitesLength
-foreign import ccall "dynamic" mk_s2n_client_hello_get_cipher_suites :: FunPtr S2nClientHelloGetCipherSuites -> S2nClientHelloGetCipherSuites
-foreign import ccall "dynamic" mk_s2n_client_hello_get_extensions_length :: FunPtr S2nClientHelloGetExtensionsLength -> S2nClientHelloGetExtensionsLength
-foreign import ccall "dynamic" mk_s2n_client_hello_get_extensions :: FunPtr S2nClientHelloGetExtensions -> S2nClientHelloGetExtensions
-foreign import ccall "dynamic" mk_s2n_client_hello_get_extension_length :: FunPtr S2nClientHelloGetExtensionLength -> S2nClientHelloGetExtensionLength
-foreign import ccall "dynamic" mk_s2n_client_hello_get_extension_by_id :: FunPtr S2nClientHelloGetExtensionById -> S2nClientHelloGetExtensionById
-foreign import ccall "dynamic" mk_s2n_client_hello_has_extension :: FunPtr S2nClientHelloHasExtension -> S2nClientHelloHasExtension
-foreign import ccall "dynamic" mk_s2n_client_hello_get_session_id_length :: FunPtr S2nClientHelloGetSessionIdLength -> S2nClientHelloGetSessionIdLength
-foreign import ccall "dynamic" mk_s2n_client_hello_get_session_id :: FunPtr S2nClientHelloGetSessionId -> S2nClientHelloGetSessionId
-foreign import ccall "dynamic" mk_s2n_client_hello_get_compression_methods_length :: FunPtr S2nClientHelloGetCompressionMethodsLength -> S2nClientHelloGetCompressionMethodsLength
-foreign import ccall "dynamic" mk_s2n_client_hello_get_compression_methods :: FunPtr S2nClientHelloGetCompressionMethods -> S2nClientHelloGetCompressionMethods
-foreign import ccall "dynamic" mk_s2n_client_hello_get_legacy_protocol_version :: FunPtr S2nClientHelloGetLegacyProtocolVersion -> S2nClientHelloGetLegacyProtocolVersion
-foreign import ccall "dynamic" mk_s2n_client_hello_get_random :: FunPtr S2nClientHelloGetRandom -> S2nClientHelloGetRandom
-foreign import ccall "dynamic" mk_s2n_client_hello_get_supported_groups :: FunPtr S2nClientHelloGetSupportedGroups -> S2nClientHelloGetSupportedGroups
-foreign import ccall "dynamic" mk_s2n_client_hello_get_server_name_length :: FunPtr S2nClientHelloGetServerNameLength -> S2nClientHelloGetServerNameLength
-foreign import ccall "dynamic" mk_s2n_client_hello_get_server_name :: FunPtr S2nClientHelloGetServerName -> S2nClientHelloGetServerName
-foreign import ccall "dynamic" mk_s2n_client_hello_get_legacy_record_version :: FunPtr S2nClientHelloGetLegacyRecordVersion -> S2nClientHelloGetLegacyRecordVersion
-
--- File Descriptor & I/O
-foreign import ccall "dynamic" mk_s2n_connection_set_fd :: FunPtr S2nConnectionSetFd -> S2nConnectionSetFd
-foreign import ccall "dynamic" mk_s2n_connection_set_read_fd :: FunPtr S2nConnectionSetReadFd -> S2nConnectionSetReadFd
-foreign import ccall "dynamic" mk_s2n_connection_set_write_fd :: FunPtr S2nConnectionSetWriteFd -> S2nConnectionSetWriteFd
-foreign import ccall "dynamic" mk_s2n_connection_get_read_fd :: FunPtr S2nConnectionGetReadFd -> S2nConnectionGetReadFd
-foreign import ccall "dynamic" mk_s2n_connection_get_write_fd :: FunPtr S2nConnectionGetWriteFd -> S2nConnectionGetWriteFd
-foreign import ccall "dynamic" mk_s2n_connection_use_corked_io :: FunPtr S2nConnectionUseCorkedIo -> S2nConnectionUseCorkedIo
-foreign import ccall "dynamic" mk_s2n_connection_set_recv_ctx :: FunPtr S2nConnectionSetRecvCtx -> S2nConnectionSetRecvCtx
-foreign import ccall "dynamic" mk_s2n_connection_set_send_ctx :: FunPtr S2nConnectionSetSendCtx -> S2nConnectionSetSendCtx
-foreign import ccall "dynamic" mk_s2n_connection_set_recv_cb :: FunPtr S2nConnectionSetRecvCb -> S2nConnectionSetRecvCb
-foreign import ccall "dynamic" mk_s2n_connection_set_send_cb :: FunPtr S2nConnectionSetSendCb -> S2nConnectionSetSendCb
-
--- Connection Preferences
-foreign import ccall "dynamic" mk_s2n_connection_prefer_throughput :: FunPtr S2nConnectionPreferThroughput -> S2nConnectionPreferThroughput
-foreign import ccall "dynamic" mk_s2n_connection_prefer_low_latency :: FunPtr S2nConnectionPreferLowLatency -> S2nConnectionPreferLowLatency
-foreign import ccall "dynamic" mk_s2n_connection_set_recv_buffering :: FunPtr S2nConnectionSetRecvBuffering -> S2nConnectionSetRecvBuffering
-foreign import ccall "dynamic" mk_s2n_peek_buffered :: FunPtr S2nPeekBuffered -> S2nPeekBuffered
-foreign import ccall "dynamic" mk_s2n_connection_set_dynamic_buffers :: FunPtr S2nConnectionSetDynamicBuffers -> S2nConnectionSetDynamicBuffers
-foreign import ccall "dynamic" mk_s2n_connection_set_dynamic_record_threshold :: FunPtr S2nConnectionSetDynamicRecordThreshold -> S2nConnectionSetDynamicRecordThreshold
-
--- Host Verification
-foreign import ccall "dynamic" mk_s2n_connection_set_verify_host_callback :: FunPtr S2nConnectionSetVerifyHostCallback -> S2nConnectionSetVerifyHostCallback
-
--- Blinding & Security
-foreign import ccall "dynamic" mk_s2n_connection_set_blinding :: FunPtr S2nConnectionSetBlinding -> S2nConnectionSetBlinding
-foreign import ccall "dynamic" mk_s2n_connection_get_delay :: FunPtr S2nConnectionGetDelay -> S2nConnectionGetDelay
-
--- Cipher & Protocol Configuration
-foreign import ccall "dynamic" mk_s2n_connection_set_cipher_preferences :: FunPtr S2nConnectionSetCipherPreferences -> S2nConnectionSetCipherPreferences
-foreign import ccall "dynamic" mk_s2n_connection_request_key_update :: FunPtr S2nConnectionRequestKeyUpdate -> S2nConnectionRequestKeyUpdate
-foreign import ccall "dynamic" mk_s2n_connection_append_protocol_preference :: FunPtr S2nConnectionAppendProtocolPreference -> S2nConnectionAppendProtocolPreference
-foreign import ccall "dynamic" mk_s2n_connection_set_protocol_preferences :: FunPtr S2nConnectionSetProtocolPreferences -> S2nConnectionSetProtocolPreferences
-
--- Server Name (SNI)
-foreign import ccall "dynamic" mk_s2n_set_server_name :: FunPtr S2nSetServerName -> S2nSetServerName
-foreign import ccall "dynamic" mk_s2n_get_server_name :: FunPtr S2nGetServerName -> S2nGetServerName
-
--- Application Protocol (ALPN)
-foreign import ccall "dynamic" mk_s2n_get_application_protocol :: FunPtr S2nGetApplicationProtocol -> S2nGetApplicationProtocol
-
--- OCSP & Certificate Transparency
-foreign import ccall "dynamic" mk_s2n_connection_get_ocsp_response :: FunPtr S2nConnectionGetOcspResponse -> S2nConnectionGetOcspResponse
-foreign import ccall "dynamic" mk_s2n_connection_get_sct_list :: FunPtr S2nConnectionGetSctList -> S2nConnectionGetSctList
-
--- Handshake & TLS Operations
-foreign import ccall "dynamic" mk_s2n_negotiate :: FunPtr S2nNegotiate -> S2nNegotiate
-foreign import ccall "dynamic" mk_s2n_send :: FunPtr S2nSend -> S2nSend
-foreign import ccall "dynamic" mk_s2n_recv :: FunPtr S2nRecv -> S2nRecv
-foreign import ccall "dynamic" mk_s2n_peek :: FunPtr S2nPeek -> S2nPeek
-foreign import ccall "dynamic" mk_s2n_connection_free_handshake :: FunPtr S2nConnectionFreeHandshake -> S2nConnectionFreeHandshake
-foreign import ccall "dynamic" mk_s2n_connection_release_buffers :: FunPtr S2nConnectionReleaseBuffers -> S2nConnectionReleaseBuffers
-foreign import ccall "dynamic" mk_s2n_connection_wipe :: FunPtr S2nConnectionWipe -> S2nConnectionWipe
-foreign import ccall "dynamic" mk_s2n_connection_free :: FunPtr S2nConnectionFree -> S2nConnectionFree
-foreign import ccall "dynamic" mk_s2n_shutdown :: FunPtr S2nShutdown -> S2nShutdown
-foreign import ccall "dynamic" mk_s2n_shutdown_send :: FunPtr S2nShutdownSend -> S2nShutdownSend
-
--- Client Authentication
-foreign import ccall "dynamic" mk_s2n_connection_get_client_auth_type :: FunPtr S2nConnectionGetClientAuthType -> S2nConnectionGetClientAuthType
-foreign import ccall "dynamic" mk_s2n_connection_set_client_auth_type :: FunPtr S2nConnectionSetClientAuthType -> S2nConnectionSetClientAuthType
-foreign import ccall "dynamic" mk_s2n_connection_get_client_cert_chain :: FunPtr S2nConnectionGetClientCertChain -> S2nConnectionGetClientCertChain
-foreign import ccall "dynamic" mk_s2n_connection_client_cert_used :: FunPtr S2nConnectionClientCertUsed -> S2nConnectionClientCertUsed
-
--- Session Management
-foreign import ccall "dynamic" mk_s2n_connection_add_new_tickets_to_send :: FunPtr S2nConnectionAddNewTicketsToSend -> S2nConnectionAddNewTicketsToSend
-foreign import ccall "dynamic" mk_s2n_connection_get_tickets_sent :: FunPtr S2nConnectionGetTicketsSent -> S2nConnectionGetTicketsSent
-foreign import ccall "dynamic" mk_s2n_connection_set_server_keying_material_lifetime :: FunPtr S2nConnectionSetServerKeyingMaterialLifetime -> S2nConnectionSetServerKeyingMaterialLifetime
-foreign import ccall "dynamic" mk_s2n_session_ticket_get_data_len :: FunPtr S2nSessionTicketGetDataLen -> S2nSessionTicketGetDataLen
-foreign import ccall "dynamic" mk_s2n_session_ticket_get_data :: FunPtr S2nSessionTicketGetData -> S2nSessionTicketGetData
-foreign import ccall "dynamic" mk_s2n_session_ticket_get_lifetime :: FunPtr S2nSessionTicketGetLifetime -> S2nSessionTicketGetLifetime
-foreign import ccall "dynamic" mk_s2n_connection_set_session :: FunPtr S2nConnectionSetSession -> S2nConnectionSetSession
-foreign import ccall "dynamic" mk_s2n_connection_get_session :: FunPtr S2nConnectionGetSession -> S2nConnectionGetSession
-foreign import ccall "dynamic" mk_s2n_connection_get_session_ticket_lifetime_hint :: FunPtr S2nConnectionGetSessionTicketLifetimeHint -> S2nConnectionGetSessionTicketLifetimeHint
-foreign import ccall "dynamic" mk_s2n_connection_get_session_length :: FunPtr S2nConnectionGetSessionLength -> S2nConnectionGetSessionLength
-foreign import ccall "dynamic" mk_s2n_connection_get_session_id_length :: FunPtr S2nConnectionGetSessionIdLength -> S2nConnectionGetSessionIdLength
-foreign import ccall "dynamic" mk_s2n_connection_get_session_id :: FunPtr S2nConnectionGetSessionId -> S2nConnectionGetSessionId
-foreign import ccall "dynamic" mk_s2n_connection_is_session_resumed :: FunPtr S2nConnectionIsSessionResumed -> S2nConnectionIsSessionResumed
-
--- Certificate Information
-foreign import ccall "dynamic" mk_s2n_connection_is_ocsp_stapled :: FunPtr S2nConnectionIsOcspStapled -> S2nConnectionIsOcspStapled
-foreign import ccall "dynamic" mk_s2n_connection_get_selected_signature_algorithm :: FunPtr S2nConnectionGetSelectedSignatureAlgorithm -> S2nConnectionGetSelectedSignatureAlgorithm
-foreign import ccall "dynamic" mk_s2n_connection_get_selected_digest_algorithm :: FunPtr S2nConnectionGetSelectedDigestAlgorithm -> S2nConnectionGetSelectedDigestAlgorithm
-foreign import ccall "dynamic" mk_s2n_connection_get_selected_client_cert_signature_algorithm :: FunPtr S2nConnectionGetSelectedClientCertSignatureAlgorithm -> S2nConnectionGetSelectedClientCertSignatureAlgorithm
-foreign import ccall "dynamic" mk_s2n_connection_get_selected_client_cert_digest_algorithm :: FunPtr S2nConnectionGetSelectedClientCertDigestAlgorithm -> S2nConnectionGetSelectedClientCertDigestAlgorithm
-foreign import ccall "dynamic" mk_s2n_connection_get_signature_scheme :: FunPtr S2nConnectionGetSignatureScheme -> S2nConnectionGetSignatureScheme
-foreign import ccall "dynamic" mk_s2n_connection_get_selected_cert :: FunPtr S2nConnectionGetSelectedCert -> S2nConnectionGetSelectedCert
-foreign import ccall "dynamic" mk_s2n_cert_chain_get_length :: FunPtr S2nCertChainGetLength -> S2nCertChainGetLength
-foreign import ccall "dynamic" mk_s2n_cert_chain_get_cert :: FunPtr S2nCertChainGetCert -> S2nCertChainGetCert
-foreign import ccall "dynamic" mk_s2n_cert_get_der :: FunPtr S2nCertGetDer -> S2nCertGetDer
-foreign import ccall "dynamic" mk_s2n_connection_get_peer_cert_chain :: FunPtr S2nConnectionGetPeerCertChain -> S2nConnectionGetPeerCertChain
-foreign import ccall "dynamic" mk_s2n_cert_get_x509_extension_value_length :: FunPtr S2nCertGetX509ExtensionValueLength -> S2nCertGetX509ExtensionValueLength
-foreign import ccall "dynamic" mk_s2n_cert_get_x509_extension_value :: FunPtr S2nCertGetX509ExtensionValue -> S2nCertGetX509ExtensionValue
-foreign import ccall "dynamic" mk_s2n_cert_get_utf8_string_from_extension_data_length :: FunPtr S2nCertGetUtf8StringFromExtensionDataLength -> S2nCertGetUtf8StringFromExtensionDataLength
-foreign import ccall "dynamic" mk_s2n_cert_get_utf8_string_from_extension_data :: FunPtr S2nCertGetUtf8StringFromExtensionData -> S2nCertGetUtf8StringFromExtensionData
-
--- Pre-Shared Keys (PSK)
-foreign import ccall "dynamic" mk_s2n_external_psk_new :: FunPtr S2nExternalPskNew -> S2nExternalPskNew
-foreign import ccall "dynamic" mk_s2n_psk_free :: FunPtr S2nPskFree -> S2nPskFree
-foreign import ccall "dynamic" mk_s2n_psk_set_identity :: FunPtr S2nPskSetIdentity -> S2nPskSetIdentity
-foreign import ccall "dynamic" mk_s2n_psk_set_secret :: FunPtr S2nPskSetSecret -> S2nPskSetSecret
-foreign import ccall "dynamic" mk_s2n_psk_set_hmac :: FunPtr S2nPskSetHmac -> S2nPskSetHmac
-foreign import ccall "dynamic" mk_s2n_connection_append_psk :: FunPtr S2nConnectionAppendPsk -> S2nConnectionAppendPsk
-foreign import ccall "dynamic" mk_s2n_connection_set_psk_mode :: FunPtr S2nConnectionSetPskMode -> S2nConnectionSetPskMode
-foreign import ccall "dynamic" mk_s2n_connection_get_negotiated_psk_identity_length :: FunPtr S2nConnectionGetNegotiatedPskIdentityLength -> S2nConnectionGetNegotiatedPskIdentityLength
-foreign import ccall "dynamic" mk_s2n_connection_get_negotiated_psk_identity :: FunPtr S2nConnectionGetNegotiatedPskIdentity -> S2nConnectionGetNegotiatedPskIdentity
-foreign import ccall "dynamic" mk_s2n_offered_psk_new :: FunPtr S2nOfferedPskNew -> S2nOfferedPskNew
-foreign import ccall "dynamic" mk_s2n_offered_psk_free :: FunPtr S2nOfferedPskFree -> S2nOfferedPskFree
-foreign import ccall "dynamic" mk_s2n_offered_psk_get_identity :: FunPtr S2nOfferedPskGetIdentity -> S2nOfferedPskGetIdentity
-foreign import ccall "dynamic" mk_s2n_offered_psk_list_has_next :: FunPtr S2nOfferedPskListHasNext -> S2nOfferedPskListHasNext
-foreign import ccall "dynamic" mk_s2n_offered_psk_list_next :: FunPtr S2nOfferedPskListNext -> S2nOfferedPskListNext
-foreign import ccall "dynamic" mk_s2n_offered_psk_list_reread :: FunPtr S2nOfferedPskListReread -> S2nOfferedPskListReread
-foreign import ccall "dynamic" mk_s2n_offered_psk_list_choose_psk :: FunPtr S2nOfferedPskListChoosePsk -> S2nOfferedPskListChoosePsk
-foreign import ccall "dynamic" mk_s2n_psk_configure_early_data :: FunPtr S2nPskConfigureEarlyData -> S2nPskConfigureEarlyData
-foreign import ccall "dynamic" mk_s2n_psk_set_application_protocol :: FunPtr S2nPskSetApplicationProtocol -> S2nPskSetApplicationProtocol
-foreign import ccall "dynamic" mk_s2n_psk_set_early_data_context :: FunPtr S2nPskSetEarlyDataContext -> S2nPskSetEarlyDataContext
-
--- Connection Statistics
-foreign import ccall "dynamic" mk_s2n_connection_get_wire_bytes_in :: FunPtr S2nConnectionGetWireBytesIn -> S2nConnectionGetWireBytesIn
-foreign import ccall "dynamic" mk_s2n_connection_get_wire_bytes_out :: FunPtr S2nConnectionGetWireBytesOut -> S2nConnectionGetWireBytesOut
-
--- Protocol Version Information
-foreign import ccall "dynamic" mk_s2n_connection_get_client_protocol_version :: FunPtr S2nConnectionGetClientProtocolVersion -> S2nConnectionGetClientProtocolVersion
-foreign import ccall "dynamic" mk_s2n_connection_get_server_protocol_version :: FunPtr S2nConnectionGetServerProtocolVersion -> S2nConnectionGetServerProtocolVersion
-foreign import ccall "dynamic" mk_s2n_connection_get_actual_protocol_version :: FunPtr S2nConnectionGetActualProtocolVersion -> S2nConnectionGetActualProtocolVersion
-foreign import ccall "dynamic" mk_s2n_connection_get_client_hello_version :: FunPtr S2nConnectionGetClientHelloVersion -> S2nConnectionGetClientHelloVersion
-
--- Cipher & Security Information
-foreign import ccall "dynamic" mk_s2n_connection_get_cipher :: FunPtr S2nConnectionGetCipher -> S2nConnectionGetCipher
-foreign import ccall "dynamic" mk_s2n_connection_get_certificate_match :: FunPtr S2nConnectionGetCertificateMatch -> S2nConnectionGetCertificateMatch
-foreign import ccall "dynamic" mk_s2n_connection_get_master_secret :: FunPtr S2nConnectionGetMasterSecret -> S2nConnectionGetMasterSecret
-foreign import ccall "dynamic" mk_s2n_connection_tls_exporter :: FunPtr S2nConnectionTlsExporter -> S2nConnectionTlsExporter
-foreign import ccall "dynamic" mk_s2n_connection_get_cipher_iana_value :: FunPtr S2nConnectionGetCipherIanaValue -> S2nConnectionGetCipherIanaValue
-foreign import ccall "dynamic" mk_s2n_connection_is_valid_for_cipher_preferences :: FunPtr S2nConnectionIsValidForCipherPreferences -> S2nConnectionIsValidForCipherPreferences
-foreign import ccall "dynamic" mk_s2n_connection_get_curve :: FunPtr S2nConnectionGetCurve -> S2nConnectionGetCurve
-foreign import ccall "dynamic" mk_s2n_connection_get_kem_name :: FunPtr S2nConnectionGetKemName -> S2nConnectionGetKemName
-foreign import ccall "dynamic" mk_s2n_connection_get_kem_group_name :: FunPtr S2nConnectionGetKemGroupName -> S2nConnectionGetKemGroupName
-foreign import ccall "dynamic" mk_s2n_connection_get_key_exchange_group :: FunPtr S2nConnectionGetKeyExchangeGroup -> S2nConnectionGetKeyExchangeGroup
-foreign import ccall "dynamic" mk_s2n_connection_get_alert :: FunPtr S2nConnectionGetAlert -> S2nConnectionGetAlert
-foreign import ccall "dynamic" mk_s2n_connection_get_handshake_type_name :: FunPtr S2nConnectionGetHandshakeTypeName -> S2nConnectionGetHandshakeTypeName
-foreign import ccall "dynamic" mk_s2n_connection_get_last_message_name :: FunPtr S2nConnectionGetLastMessageName -> S2nConnectionGetLastMessageName
-
--- Async Private Key Operations
-foreign import ccall "dynamic" mk_s2n_async_pkey_op_perform :: FunPtr S2nAsyncPkeyOpPerform -> S2nAsyncPkeyOpPerform
-foreign import ccall "dynamic" mk_s2n_async_pkey_op_apply :: FunPtr S2nAsyncPkeyOpApply -> S2nAsyncPkeyOpApply
-foreign import ccall "dynamic" mk_s2n_async_pkey_op_free :: FunPtr S2nAsyncPkeyOpFree -> S2nAsyncPkeyOpFree
-foreign import ccall "dynamic" mk_s2n_async_pkey_op_get_op_type :: FunPtr S2nAsyncPkeyOpGetOpType -> S2nAsyncPkeyOpGetOpType
-foreign import ccall "dynamic" mk_s2n_async_pkey_op_get_input_size :: FunPtr S2nAsyncPkeyOpGetInputSize -> S2nAsyncPkeyOpGetInputSize
-foreign import ccall "dynamic" mk_s2n_async_pkey_op_get_input :: FunPtr S2nAsyncPkeyOpGetInput -> S2nAsyncPkeyOpGetInput
-foreign import ccall "dynamic" mk_s2n_async_pkey_op_set_output :: FunPtr S2nAsyncPkeyOpSetOutput -> S2nAsyncPkeyOpSetOutput
-
--- Early Data
-foreign import ccall "dynamic" mk_s2n_connection_set_server_max_early_data_size :: FunPtr S2nConnectionSetServerMaxEarlyDataSize -> S2nConnectionSetServerMaxEarlyDataSize
-foreign import ccall "dynamic" mk_s2n_connection_set_server_early_data_context :: FunPtr S2nConnectionSetServerEarlyDataContext -> S2nConnectionSetServerEarlyDataContext
-foreign import ccall "dynamic" mk_s2n_connection_get_early_data_status :: FunPtr S2nConnectionGetEarlyDataStatus -> S2nConnectionGetEarlyDataStatus
-foreign import ccall "dynamic" mk_s2n_connection_get_remaining_early_data_size :: FunPtr S2nConnectionGetRemainingEarlyDataSize -> S2nConnectionGetRemainingEarlyDataSize
-foreign import ccall "dynamic" mk_s2n_connection_get_max_early_data_size :: FunPtr S2nConnectionGetMaxEarlyDataSize -> S2nConnectionGetMaxEarlyDataSize
-foreign import ccall "dynamic" mk_s2n_send_early_data :: FunPtr S2nSendEarlyData -> S2nSendEarlyData
-foreign import ccall "dynamic" mk_s2n_recv_early_data :: FunPtr S2nRecvEarlyData -> S2nRecvEarlyData
-foreign import ccall "dynamic" mk_s2n_offered_early_data_get_context_length :: FunPtr S2nOfferedEarlyDataGetContextLength -> S2nOfferedEarlyDataGetContextLength
-foreign import ccall "dynamic" mk_s2n_offered_early_data_get_context :: FunPtr S2nOfferedEarlyDataGetContext -> S2nOfferedEarlyDataGetContext
-foreign import ccall "dynamic" mk_s2n_offered_early_data_reject :: FunPtr S2nOfferedEarlyDataReject -> S2nOfferedEarlyDataReject
-foreign import ccall "dynamic" mk_s2n_offered_early_data_accept :: FunPtr S2nOfferedEarlyDataAccept -> S2nOfferedEarlyDataAccept
-
--- Connection Serialization
-foreign import ccall "dynamic" mk_s2n_connection_serialization_length :: FunPtr S2nConnectionSerializationLength -> S2nConnectionSerializationLength
-foreign import ccall "dynamic" mk_s2n_connection_serialize :: FunPtr S2nConnectionSerialize -> S2nConnectionSerialize
-foreign import ccall "dynamic" mk_s2n_connection_deserialize :: FunPtr S2nConnectionDeserialize -> S2nConnectionDeserialize
+foreign import ccall "dynamic" mk_s2n_get_openssl_version :: FunPtr (IO CLong) -> IO CLong
+foreign import ccall "dynamic" mk_s2n_errno_location :: FunPtr (IO (Ptr CInt)) -> IO (Ptr CInt)
+foreign import ccall "dynamic" mk_s2n_strerror :: FunPtr (CInt -> CString -> IO CString) -> CInt -> CString -> IO CString
+foreign import ccall "dynamic" mk_s2n_strerror_debug :: FunPtr (CInt -> CString -> IO CString) -> CInt -> CString -> IO CString
+foreign import ccall "dynamic" mk_s2n_strerror_name :: FunPtr (CInt -> IO CString) -> CInt -> IO CString
+foreign import ccall "dynamic" mk_s2n_strerror_source :: FunPtr (CInt -> IO CString) -> CInt -> IO CString
+foreign import ccall "dynamic" mk_s2n_cert_chain_and_key_get_ctx :: FunPtr (Ptr S2nCertChainAndKey -> IO (Ptr a)) -> Ptr S2nCertChainAndKey -> IO (Ptr a)
+foreign import ccall "dynamic" mk_s2n_config_get_ctx :: FunPtr (Ptr S2nConfig -> IO (Ptr a)) -> Ptr S2nConfig -> IO (Ptr a)
+foreign import ccall "dynamic" mk_s2n_connection_get_ctx :: FunPtr (Ptr S2nConnection -> IO (Ptr a)) -> Ptr S2nConnection -> IO (Ptr a)
+foreign import ccall "dynamic" mk_s2n_connection_get_client_hello :: FunPtr (Ptr S2nConnection -> IO (Ptr S2nClientHello)) -> Ptr S2nConnection -> IO (Ptr S2nClientHello)
+foreign import ccall "dynamic" mk_s2n_connection_get_delay :: FunPtr (Ptr S2nConnection -> IO Word64) -> Ptr S2nConnection -> IO Word64
+foreign import ccall "dynamic" mk_s2n_get_server_name :: FunPtr (Ptr S2nConnection -> IO CString) -> Ptr S2nConnection -> IO CString
+foreign import ccall "dynamic" mk_s2n_get_application_protocol :: FunPtr (Ptr S2nConnection -> IO CString) -> Ptr S2nConnection -> IO CString
+foreign import ccall "dynamic" mk_s2n_connection_get_wire_bytes_in :: FunPtr (Ptr S2nConnection -> IO Word64) -> Ptr S2nConnection -> IO Word64
+foreign import ccall "dynamic" mk_s2n_connection_get_wire_bytes_out :: FunPtr (Ptr S2nConnection -> IO Word64) -> Ptr S2nConnection -> IO Word64
+foreign import ccall "dynamic" mk_s2n_connection_get_cipher :: FunPtr (Ptr S2nConnection -> IO CString) -> Ptr S2nConnection -> IO CString
+foreign import ccall "dynamic" mk_s2n_connection_get_curve :: FunPtr (Ptr S2nConnection -> IO CString) -> Ptr S2nConnection -> IO CString
+foreign import ccall "dynamic" mk_s2n_connection_get_kem_name :: FunPtr (Ptr S2nConnection -> IO CString) -> Ptr S2nConnection -> IO CString
+foreign import ccall "dynamic" mk_s2n_connection_get_kem_group_name :: FunPtr (Ptr S2nConnection -> IO CString) -> Ptr S2nConnection -> IO CString
+foreign import ccall "dynamic" mk_s2n_connection_get_key_exchange_group :: FunPtr (Ptr S2nConnection -> IO CString) -> Ptr S2nConnection -> IO CString
+foreign import ccall "dynamic" mk_s2n_connection_get_handshake_type_name :: FunPtr (Ptr S2nConnection -> IO CString) -> Ptr S2nConnection -> IO CString
+foreign import ccall "dynamic" mk_s2n_connection_get_last_message_name :: FunPtr (Ptr S2nConnection -> IO CString) -> Ptr S2nConnection -> IO CString
+foreign import ccall "dynamic" mk_s2n_stack_traces_enabled :: FunPtr (IO CBool) -> IO CBool
+foreign import ccall "dynamic" mk_s2n_peek_buffered :: FunPtr (Ptr S2nConnection -> IO Word32) -> Ptr S2nConnection -> IO Word32
+foreign import ccall "dynamic" mk_s2n_peek :: FunPtr (Ptr S2nConnection -> IO Word32) -> Ptr S2nConnection -> IO Word32
+foreign import ccall "dynamic" mk_s2n_offered_psk_list_has_next :: FunPtr (Ptr S2nOfferedPskList -> IO CBool) -> Ptr S2nOfferedPskList -> IO CBool
+foreign import ccall "dynamic" mk_s2n_error_get_type :: FunPtr (CInt -> IO S2nErrorType) -> CInt -> IO S2nErrorType

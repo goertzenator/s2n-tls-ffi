@@ -7,8 +7,8 @@ description:
     It follows the Rust convention of "sys" packages that provide raw
     bindings which higher-level packages can build upon.
     .
-    Use the @linked@ flag to get bindings via linked symbols, or the
-    @dynamic@ flag to load the library at runtime via dlopen.
+    Use @withLinkedTlsSys@ to load symbols from an already-linked library,
+    or @withDynamicTlsSys@ to load the library at runtime via dlopen.
 
 license:            BSD-3-Clause
 license-file:       LICENSE
@@ -18,37 +18,33 @@ category:           Cryptography, FFI
 build-type:         Simple
 extra-doc-files:    CHANGELOG.md
 
-flag linked
-    description: Enable linked symbol bindings (getLinkedTlsSys)
-    default:     True
-    manual:      True
-
-flag dynamic
-    description: Enable dynamic loading bindings (withDynamicTlsSys)
-    default:     False
-    manual:      True
-
 library
     exposed-modules:
         S2nTls.Sys
         S2nTls.Sys.Types
+        S2nTls.Sys.Linked
+        S2nTls.Sys.Dynamic
 
     build-depends:
         base >= 4.14 && < 5
+      , unix >= 2.7
 
     hs-source-dirs:   src
     default-language: GHC2021
 
-    if flag(linked)
-        exposed-modules:
-            S2nTls.Sys.Linked
-        extra-libraries:
-            s2n
-        cpp-options: -DS2N_TLS_SYS_LINKED
+    -- C wrapper for capturing error info from thread-local storage
+    c-sources:        cbits/s2n_wrapper.c
+    include-dirs:     cbits
 
-    if flag(dynamic)
-        exposed-modules:
-            S2nTls.Sys.Dynamic
-        build-depends:
-            unix >= 2.7
-        cpp-options: -DS2N_TLS_SYS_DYNAMIC
+    -- Required for withLinkedTlsSys (symbols loaded via dlopen(NULL))
+    extra-libraries:  s2n
+
+test-suite memory-safety
+    type:             exitcode-stdio-1.0
+    main-is:          MemorySafety.hs
+    hs-source-dirs:   test
+    default-language: GHC2021
+    build-depends:
+        base >= 4.14 && < 5
+      , s2n-tls-sys
+    ghc-options:      -threaded -rtsopts "-with-rtsopts=-N"

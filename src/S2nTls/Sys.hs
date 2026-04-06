@@ -1,5 +1,3 @@
-{-# LANGUAGE CPP #-}
-
 -- |
 -- Module      : S2nTls.Sys
 -- Description : Low-level FFI bindings to the s2n-tls library
@@ -9,35 +7,38 @@
 -- following the Rust convention of "sys" packages for raw bindings.
 --
 -- The core type is 'S2nTlsSys', a record containing all FFI function
--- pointers. This record can be obtained in two ways depending on which
--- cabal flags are enabled:
+-- pointers. This record can be obtained in two ways:
 --
--- * @linked@ flag: Provides 'getLinkedTlsSys' for statically linked bindings.
+-- * 'withLinkedTlsSys': For executables that link s2n-tls at compile time.
+--   Uses dlopen(NULL) to load symbols from the running executable.
 --
--- * @dynamic@ flag: Provides 'withDynamicTlsSys' to load the library at
---   runtime via dlopen.
+-- * 'withDynamicTlsSys': To load the library at runtime via dlopen.
+--   Pass the path to libs2n.so.
+--
+-- Both methods use C wrappers to safely capture error information
+-- (including TLS-dependent error strings) in the same C stack frame,
+-- avoiding thread-local storage issues in Haskell FFI.
+--
+-- Symbol loading is forgiving - missing symbols don't cause failure
+-- at load time. Instead, calling a missing symbol throws 'MissingSymbol'.
+-- Check the 'missingSymbols' field to see which symbols weren't found.
 module S2nTls.Sys
     ( -- * Core Types
       S2nTlsSys (..)
 
-#ifdef S2N_TLS_SYS_LINKED
       -- * Linked Bindings
-    , getLinkedTlsSys
-#endif
+    , withLinkedTlsSys
 
-#ifdef S2N_TLS_SYS_DYNAMIC
       -- * Dynamic Bindings
     , withDynamicTlsSys
     , DynamicLoadError (..)
-#endif
+
+      -- * Error Types
+    , MissingSymbol (..)
+    , S2nError (..)
+    , S2nErrorFuncs (..)
     ) where
 
-import S2nTls.Sys.Types (S2nTlsSys (..))
-
-#ifdef S2N_TLS_SYS_LINKED
-import S2nTls.Sys.Linked (getLinkedTlsSys)
-#endif
-
-#ifdef S2N_TLS_SYS_DYNAMIC
+import S2nTls.Sys.Types (S2nTlsSys (..), S2nError (..), S2nErrorFuncs (..), MissingSymbol (..))
+import S2nTls.Sys.Linked (withLinkedTlsSys)
 import S2nTls.Sys.Dynamic (DynamicLoadError (..), withDynamicTlsSys)
-#endif
