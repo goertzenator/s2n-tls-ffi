@@ -1,35 +1,37 @@
-# s2n-tls-sys
+# s2n-tls-ffi
 
 Low-level FFI bindings to the [s2n-tls](https://github.com/aws/s2n-tls) library.
 
-This package follows the Rust convention of "sys" packages that provide raw FFI bindings which higher-level packages can build upon.
+This package provides raw FFI bindings which higher-level packages can build upon.
 
-## Loading Modes
+## Loading the Library
 
-### Linked Bindings
+Use `withS2nTlsFfi` with a `Library` parameter to load the s2n-tls symbols:
 
-Use `withLinkedTlsSys` when s2n-tls is linked into your executable at compile time. This uses `dlopen(NULL)` to resolve symbols from the running process.
+### Linked
+
+Use `Linked` when s2n-tls is linked into your executable at compile time. This uses `dlopen(NULL)` to resolve symbols from the running process.
 
 ```haskell
-import S2nTls.Sys
+import S2nTls.Ffi
 
 main :: IO ()
-main = withLinkedTlsSys $ \sys -> do
-    -- use sys...
+main = withS2nTlsFfi Linked $ \ffi -> do
+    -- use ffi...
 ```
 
-### Dynamic Bindings
+### Dynamic
 
-Use `withDynamicTlsSys` to load s2n-tls at runtime via `dlopen`. This enables runtime selection of different library builds - for example, switching between FIPS and non-FIPS crypto backends without recompiling your application.
+Use `Dynamic path` to load s2n-tls at runtime via `dlopen`. This enables runtime selection of different library builds - for example, switching between FIPS and non-FIPS crypto backends without recompiling your application.
 
 ```haskell
-import S2nTls.Sys
+import S2nTls.Ffi
 
 main :: IO ()
 main = do
-    let libPath = if needFips then "libs2n-fips.so" else "libs2n.so"
-    withDynamicTlsSys libPath $ \sys -> do
-        -- use sys...
+    let lib = if needFips then Dynamic "libs2n-fips.so" else Dynamic "libs2n.so"
+    withS2nTlsFfi lib $ \ffi -> do
+        -- use ffi...
 ```
 
 ## Error Handling via C Wrappers
@@ -43,7 +45,7 @@ To solve this, most s2n functions are called through thin C wrappers that:
 3. Copy this information into an output struct with an owned 256-byte buffer
 4. Return to Haskell with the error information safely captured
 
-This ensures error information is captured in the same C stack frame before control returns to Haskell. The `S2nTlsSys` record exposes these wrapped functions, which return `Either S2nError result` for functions that can fail.
+This ensures error information is captured in the same C stack frame before control returns to Haskell. The `S2nTlsFfi` record exposes these wrapped functions, which return `Either S2nError result` for functions that can fail.
 
 Note that `s2n_send` and `s2n_recv` have special behavior: if the error was `S2N_ERR_T_BLOCKED`, debug info is not captured because this is a frequent, expected case that doesn't need debug overhead.
 
@@ -55,7 +57,7 @@ The `s2n_strerror` and `s2n_strerror_name` functions are **not** subject to thre
 
 Symbol loading is forgiving - missing symbols don't cause failure at load time. This allows the bindings to work with different versions of s2n-tls that may not export all functions.
 
-- The `missingSymbols` field of `S2nTlsSys` lists symbol names that couldn't be loaded
+- The `missingSymbols` field of `S2nTlsFfi` lists symbol names that couldn't be loaded
 - Calling a function for a missing symbol throws a `MissingSymbol` exception
 - Check `missingSymbols` at startup if your application requires specific functions
 

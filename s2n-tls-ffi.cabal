@@ -1,14 +1,13 @@
 cabal-version:      3.0
-name:               s2n-tls-sys
+name:               s2n-tls-ffi
 version:            0.1.0.0
 synopsis:           Low-level FFI bindings to the s2n-tls library
 description:
     This package provides low-level FFI bindings to the s2n-tls library.
-    It follows the Rust convention of "sys" packages that provide raw
-    bindings which higher-level packages can build upon.
+    It provides raw bindings which higher-level packages can build upon.
     .
-    Use @withLinkedTlsSys@ to load symbols from an already-linked library,
-    or @withDynamicTlsSys@ to load the library at runtime via dlopen.
+    Use @withS2nTlsFfi@ with a @Library@ parameter to load symbols:
+    @Linked@ for compile-time linking, or @Dynamic path@ for runtime loading.
 
 license:            BSD-3-Clause
 license-file:       LICENSE
@@ -20,10 +19,8 @@ extra-doc-files:    CHANGELOG.md
 
 library
     exposed-modules:
-        S2nTls.Sys
-        S2nTls.Sys.Types
-        S2nTls.Sys.Linked
-        S2nTls.Sys.Dynamic
+        S2nTls.Ffi
+        S2nTls.Ffi.Types
 
     build-depends:
         base >= 4.14 && < 5
@@ -36,7 +33,7 @@ library
     c-sources:        cbits/s2n_wrapper.c
     include-dirs:     cbits
 
-    -- Required for withLinkedTlsSys (symbols loaded via dlopen(NULL))
+    -- Required for Linked mode (symbols loaded via dlopen(NULL))
     extra-libraries:  s2n
 
 test-suite memory-safety
@@ -46,5 +43,5 @@ test-suite memory-safety
     default-language: GHC2021
     build-depends:
         base >= 4.14 && < 5
-      , s2n-tls-sys
+      , s2n-tls-ffi
     ghc-options:      -threaded -rtsopts "-with-rtsopts=-N"

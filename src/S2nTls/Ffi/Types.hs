@@ -1,14 +1,14 @@
 {-# LANGUAGE PatternSynonyms #-}
 
 {- |
-Module      : S2nTls.Sys.Types
+Module      : S2nTls.Ffi.Types
 Description : Core types for s2n-tls FFI bindings
 License     : BSD-3-Clause
 
 This module defines the core types used by the s2n-tls FFI bindings,
-including the 'S2nTlsSys' record that contains all FFI function pointers.
+including the 'S2nTlsFfi' record that contains all FFI function pointers.
 -}
-module S2nTls.Sys.Types (
+module S2nTls.Ffi.Types (
   -- * Error Types
   S2nError (..),
   S2nErrorFuncs (..),
@@ -171,7 +171,7 @@ module S2nTls.Sys.Types (
   S2nEarlyDataCb,
 
   -- * FFI Record
-  S2nTlsSys (..),
+  S2nTlsFfi (..),
 ) where
 
 import Control.Exception (Exception)
@@ -204,6 +204,8 @@ data S2nError = S2nError
   -- ^ Result of s2n_strerror_debug()
   }
   deriving (Show, Eq)
+
+instance Exception S2nError
 
 {- | Struct of error function pointers, passed to C wrappers.
 Loaded first during initialization - fatal if any are missing.
@@ -715,15 +717,15 @@ type S2nKeyLogFn = FunPtr (Ptr () -> Ptr S2nConnection -> Ptr Word8 -> CSize -> 
 type S2nEarlyDataCb = FunPtr (Ptr S2nConnection -> Ptr S2nOfferedEarlyData -> IO CInt)
 
 --------------------------------------------------------------------------------
--- S2nTlsSys Record
+-- S2nTlsFfi Record
 --------------------------------------------------------------------------------
 
 {- | A record containing all FFI bindings to the s2n-tls library.
 
-This record can be populated either via linked symbols (see
-"S2nTls.Sys.Linked") or via dynamic loading (see "S2nTls.Sys.Dynamic").
+This record is populated by 'S2nTls.Ffi.withS2nTlsFfi' with the 'Library'
+parameter specifying either 'Linked' or 'Dynamic' loading.
 -}
-data S2nTlsSys = S2nTlsSys
+data S2nTlsFfi = S2nTlsFfi
   { missingSymbols :: [String]
   -- ^ List of symbol names that couldn't be loaded.
   -- Calling functions for these symbols will throw 'MissingSymbol'.
