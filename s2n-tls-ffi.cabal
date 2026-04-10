@@ -16,6 +16,7 @@ maintainer:         daniel.goertzen@gmail.com
 category:           Cryptography, FFI
 build-type:         Simple
 extra-doc-files:    CHANGELOG.md
+extra-source-files: cbits/s2n_wrapper.h
 
 library
     exposed-modules:
