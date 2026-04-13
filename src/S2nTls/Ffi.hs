@@ -3,7 +3,11 @@
 {- |
 Module      : S2nTls.Ffi
 Description : Low-level FFI bindings to the s2n-tls library
-License     : BSD-3-Clause
+Copyright   : (c) 2026 Daniel Goertzen
+License     : Apache-2.0
+Maintainer  : daniel.goertzen@gmail.com
+Stability   : experimental
+Portability : non-portable (requires s2n-tls C library)
 
 This module provides low-level FFI bindings to the s2n-tls library.
 

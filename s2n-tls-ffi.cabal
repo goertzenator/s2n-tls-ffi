@@ -9,7 +9,7 @@ description:
     Use @withS2nTlsFfi@ with a @Library@ parameter to load symbols:
     @Linked@ for compile-time linking, or @Dynamic path@ for runtime loading.
 
-license:            BSD-3-Clause
+license:            Apache-2.0
 license-file:       LICENSE
 author:             Daniel Goertzen
 maintainer:         daniel.goertzen@gmail.com
