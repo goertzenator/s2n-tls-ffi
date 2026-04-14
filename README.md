@@ -71,6 +71,11 @@ Run with:
 cabal test memory-safety
 ```
 
+## Related Packages
+
+- [s2n-tls](https://github.com/goertzenator/s2n-tls) - High-level Haskell bindings built on this package
+- [warp-s2n-tls](https://github.com/goertzenator/warp-s2n-tls) - TLS support for Warp using s2n-tls
+
 ## License
 
-BSD-3-Clause
+Apache-2.0

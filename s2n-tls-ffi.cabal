@@ -15,8 +15,17 @@ author:             Daniel Goertzen
 maintainer:         daniel.goertzen@gmail.com
 category:           Cryptography, FFI
 build-type:         Simple
-extra-doc-files:    CHANGELOG.md
+tested-with:        GHC == 9.8.2
+extra-doc-files:
+    CHANGELOG.md
+    README.md
 extra-source-files: cbits/s2n_wrapper.h
+homepage:           https://github.com/goertzenator/s2n-tls-ffi
+bug-reports:        https://github.com/goertzenator/s2n-tls-ffi/issues
+
+source-repository head
+    type:     git
+    location: https://github.com/goertzenator/s2n-tls-ffi.git
 
 library
     exposed-modules:
@@ -29,6 +38,7 @@ library
 
     hs-source-dirs:   src
     default-language: GHC2021
+    ghc-options:      -Wall -haddock
 
     -- C wrapper for capturing error info from thread-local storage
     c-sources:        cbits/s2n_wrapper.c

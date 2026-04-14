@@ -3,7 +3,11 @@
 {- |
 Module      : S2nTls.Ffi.Types
 Description : Core types for s2n-tls FFI bindings
-License     : BSD-3-Clause
+Copyright   : (c) 2026 Daniel Goertzen
+License     : Apache-2.0
+Maintainer  : daniel.goertzen@gmail.com
+Stability   : experimental
+Portability : non-portable (requires s2n-tls C library)
 
 This module defines the core types used by the s2n-tls FFI bindings,
 including the 'S2nTlsFfi' record that contains all FFI function pointers.
@@ -305,12 +309,15 @@ data S2nStacktrace
 -- Return Codes
 --------------------------------------------------------------------------------
 
+-- | Function completed successfully.
 pattern S2N_SUCCESS :: CInt
 pattern S2N_SUCCESS = 0
 
+-- | Function encountered an error.
 pattern S2N_FAILURE :: CInt
 pattern S2N_FAILURE = -1
 
+-- | Callback was blocked and needs to be retried.
 pattern S2N_CALLBACK_BLOCKED :: CInt
 pattern S2N_CALLBACK_BLOCKED = -2
 
@@ -318,30 +325,39 @@ pattern S2N_CALLBACK_BLOCKED = -2
 -- TLS Versions
 --------------------------------------------------------------------------------
 
+-- | Minimum supported TLS record major version.
 pattern S2N_MINIMUM_SUPPORTED_TLS_RECORD_MAJOR_VERSION :: Word8
 pattern S2N_MINIMUM_SUPPORTED_TLS_RECORD_MAJOR_VERSION = 2
 
+-- | Maximum supported TLS record major version.
 pattern S2N_MAXIMUM_SUPPORTED_TLS_RECORD_MAJOR_VERSION :: Word8
 pattern S2N_MAXIMUM_SUPPORTED_TLS_RECORD_MAJOR_VERSION = 3
 
+-- | SSL version 2 (deprecated, insecure).
 pattern S2N_SSLv2 :: CInt
 pattern S2N_SSLv2 = 20
 
+-- | SSL version 3 (deprecated, insecure).
 pattern S2N_SSLv3 :: CInt
 pattern S2N_SSLv3 = 30
 
+-- | TLS version 1.0.
 pattern S2N_TLS10 :: CInt
 pattern S2N_TLS10 = 31
 
+-- | TLS version 1.1.
 pattern S2N_TLS11 :: CInt
 pattern S2N_TLS11 = 32
 
+-- | TLS version 1.2.
 pattern S2N_TLS12 :: CInt
 pattern S2N_TLS12 = 33
 
+-- | TLS version 1.3.
 pattern S2N_TLS13 :: CInt
 pattern S2N_TLS13 = 34
 
+-- | Unknown or unrecognized protocol version.
 pattern S2N_UNKNOWN_PROTOCOL_VERSION :: CInt
 pattern S2N_UNKNOWN_PROTOCOL_VERSION = 0
 
@@ -349,300 +365,399 @@ pattern S2N_UNKNOWN_PROTOCOL_VERSION = 0
 -- Enumerations
 --------------------------------------------------------------------------------
 
+-- | Type of error returned by s2n functions.
 newtype S2nErrorType = S2nErrorType CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | No error occurred.
 pattern S2N_ERR_T_OK :: S2nErrorType
 pattern S2N_ERR_T_OK = S2nErrorType 0
 
+-- | I\/O error (check errno).
 pattern S2N_ERR_T_IO :: S2nErrorType
 pattern S2N_ERR_T_IO = S2nErrorType 1
 
+-- | Connection was closed.
 pattern S2N_ERR_T_CLOSED :: S2nErrorType
 pattern S2N_ERR_T_CLOSED = S2nErrorType 2
 
+-- | Operation blocked (retry needed).
 pattern S2N_ERR_T_BLOCKED :: S2nErrorType
 pattern S2N_ERR_T_BLOCKED = S2nErrorType 3
 
+-- | TLS alert received.
 pattern S2N_ERR_T_ALERT :: S2nErrorType
 pattern S2N_ERR_T_ALERT = S2nErrorType 4
 
+-- | Protocol error.
 pattern S2N_ERR_T_PROTO :: S2nErrorType
 pattern S2N_ERR_T_PROTO = S2nErrorType 5
 
+-- | Internal library error.
 pattern S2N_ERR_T_INTERNAL :: S2nErrorType
 pattern S2N_ERR_T_INTERNAL = S2nErrorType 6
 
+-- | Incorrect API usage.
 pattern S2N_ERR_T_USAGE :: S2nErrorType
 pattern S2N_ERR_T_USAGE = S2nErrorType 7
 
+-- | TLS connection mode (server or client).
 newtype S2nMode = S2nMode CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | Server mode.
 pattern S2N_SERVER :: S2nMode
 pattern S2N_SERVER = S2nMode 0
 
+-- | Client mode.
 pattern S2N_CLIENT :: S2nMode
 pattern S2N_CLIENT = S2nMode 1
 
+-- | Blinding mode for timing attack mitigation.
 newtype S2nBlinding = S2nBlinding CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | s2n handles blinding automatically.
 pattern S2N_BUILT_IN_BLINDING :: S2nBlinding
 pattern S2N_BUILT_IN_BLINDING = S2nBlinding 0
 
+-- | Application handles blinding delays.
 pattern S2N_SELF_SERVICE_BLINDING :: S2nBlinding
 pattern S2N_SELF_SERVICE_BLINDING = S2nBlinding 1
 
+-- | Status indicating why an operation was blocked.
 newtype S2nBlockedStatus = S2nBlockedStatus CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | Operation completed successfully.
 pattern S2N_NOT_BLOCKED :: S2nBlockedStatus
 pattern S2N_NOT_BLOCKED = S2nBlockedStatus 0
 
+-- | Blocked waiting for data to read.
 pattern S2N_BLOCKED_ON_READ :: S2nBlockedStatus
 pattern S2N_BLOCKED_ON_READ = S2nBlockedStatus 1
 
+-- | Blocked waiting to write data.
 pattern S2N_BLOCKED_ON_WRITE :: S2nBlockedStatus
 pattern S2N_BLOCKED_ON_WRITE = S2nBlockedStatus 2
 
+-- | Blocked waiting for application input.
 pattern S2N_BLOCKED_ON_APPLICATION_INPUT :: S2nBlockedStatus
 pattern S2N_BLOCKED_ON_APPLICATION_INPUT = S2nBlockedStatus 3
 
+-- | Blocked on early data processing.
 pattern S2N_BLOCKED_ON_EARLY_DATA :: S2nBlockedStatus
 pattern S2N_BLOCKED_ON_EARLY_DATA = S2nBlockedStatus 4
 
+-- | Client certificate authentication mode.
 newtype S2nCertAuthType = S2nCertAuthType CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | No client authentication.
 pattern S2N_CERT_AUTH_NONE :: S2nCertAuthType
 pattern S2N_CERT_AUTH_NONE = S2nCertAuthType 0
 
+-- | Client certificate required.
 pattern S2N_CERT_AUTH_REQUIRED :: S2nCertAuthType
 pattern S2N_CERT_AUTH_REQUIRED = S2nCertAuthType 1
 
+-- | Client certificate optional.
 pattern S2N_CERT_AUTH_OPTIONAL :: S2nCertAuthType
 pattern S2N_CERT_AUTH_OPTIONAL = S2nCertAuthType 2
 
+-- | HMAC algorithm for pre-shared keys.
 newtype S2nPskHmac = S2nPskHmac CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | HMAC-SHA256 for PSK.
 pattern S2N_PSK_HMAC_SHA256 :: S2nPskHmac
 pattern S2N_PSK_HMAC_SHA256 = S2nPskHmac 0
 
+-- | HMAC-SHA384 for PSK.
 pattern S2N_PSK_HMAC_SHA384 :: S2nPskHmac
 pattern S2N_PSK_HMAC_SHA384 = S2nPskHmac 1
 
+-- | Pre-shared key mode.
 newtype S2nPskMode = S2nPskMode CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | PSK for session resumption.
 pattern S2N_PSK_MODE_RESUMPTION :: S2nPskMode
 pattern S2N_PSK_MODE_RESUMPTION = S2nPskMode 0
 
+-- | External\/out-of-band PSK.
 pattern S2N_PSK_MODE_EXTERNAL :: S2nPskMode
 pattern S2N_PSK_MODE_EXTERNAL = S2nPskMode 1
 
+-- | Status of TLS 1.3 early data (0-RTT).
 newtype S2nEarlyDataStatus = S2nEarlyDataStatus CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | Early data accepted.
 pattern S2N_EARLY_DATA_STATUS_OK :: S2nEarlyDataStatus
 pattern S2N_EARLY_DATA_STATUS_OK = S2nEarlyDataStatus 0
 
+-- | Early data not requested.
 pattern S2N_EARLY_DATA_STATUS_NOT_REQUESTED :: S2nEarlyDataStatus
 pattern S2N_EARLY_DATA_STATUS_NOT_REQUESTED = S2nEarlyDataStatus 1
 
+-- | Early data rejected.
 pattern S2N_EARLY_DATA_STATUS_REJECTED :: S2nEarlyDataStatus
 pattern S2N_EARLY_DATA_STATUS_REJECTED = S2nEarlyDataStatus 2
 
+-- | Early data processing complete.
 pattern S2N_EARLY_DATA_STATUS_END :: S2nEarlyDataStatus
 pattern S2N_EARLY_DATA_STATUS_END = S2nEarlyDataStatus 3
 
+-- | Type of async private key operation.
 newtype S2nAsyncPkeyOpType = S2nAsyncPkeyOpType CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | Decryption operation.
 pattern S2N_ASYNC_DECRYPT :: S2nAsyncPkeyOpType
 pattern S2N_ASYNC_DECRYPT = S2nAsyncPkeyOpType 0
 
+-- | Signing operation.
 pattern S2N_ASYNC_SIGN :: S2nAsyncPkeyOpType
 pattern S2N_ASYNC_SIGN = S2nAsyncPkeyOpType 1
 
+-- | Validation mode for async private key operations.
 newtype S2nAsyncPkeyValidationMode = S2nAsyncPkeyValidationMode CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | Fast validation (less strict).
 pattern S2N_ASYNC_PKEY_VALIDATION_FAST :: S2nAsyncPkeyValidationMode
 pattern S2N_ASYNC_PKEY_VALIDATION_FAST = S2nAsyncPkeyValidationMode 0
 
+-- | Strict validation.
 pattern S2N_ASYNC_PKEY_VALIDATION_STRICT :: S2nAsyncPkeyValidationMode
 pattern S2N_ASYNC_PKEY_VALIDATION_STRICT = S2nAsyncPkeyValidationMode 1
 
+-- | Connection serialization format version.
 newtype S2nSerializationVersion = S2nSerializationVersion CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | No serialization.
 pattern S2N_SERIALIZED_CONN_NONE :: S2nSerializationVersion
 pattern S2N_SERIALIZED_CONN_NONE = S2nSerializationVersion 0
 
+-- | Serialization format version 1.
 pattern S2N_SERIALIZED_CONN_V1 :: S2nSerializationVersion
 pattern S2N_SERIALIZED_CONN_V1 = S2nSerializationVersion 1
 
+-- | TLS extension type identifier.
 newtype S2nTlsExtensionType = S2nTlsExtensionType CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | Server Name Indication (SNI) extension.
 pattern S2N_EXTENSION_SERVER_NAME :: S2nTlsExtensionType
 pattern S2N_EXTENSION_SERVER_NAME = S2nTlsExtensionType 0
 
+-- | Maximum fragment length extension.
 pattern S2N_EXTENSION_MAX_FRAG_LEN :: S2nTlsExtensionType
 pattern S2N_EXTENSION_MAX_FRAG_LEN = S2nTlsExtensionType 1
 
+-- | OCSP stapling extension.
 pattern S2N_EXTENSION_OCSP_STAPLING :: S2nTlsExtensionType
 pattern S2N_EXTENSION_OCSP_STAPLING = S2nTlsExtensionType 5
 
+-- | Supported groups (elliptic curves) extension.
 pattern S2N_EXTENSION_SUPPORTED_GROUPS :: S2nTlsExtensionType
 pattern S2N_EXTENSION_SUPPORTED_GROUPS = S2nTlsExtensionType 10
 
+-- | EC point formats extension.
 pattern S2N_EXTENSION_EC_POINT_FORMATS :: S2nTlsExtensionType
 pattern S2N_EXTENSION_EC_POINT_FORMATS = S2nTlsExtensionType 11
 
+-- | Signature algorithms extension.
 pattern S2N_EXTENSION_SIGNATURE_ALGORITHMS :: S2nTlsExtensionType
 pattern S2N_EXTENSION_SIGNATURE_ALGORITHMS = S2nTlsExtensionType 13
 
+-- | Application-Layer Protocol Negotiation (ALPN) extension.
 pattern S2N_EXTENSION_ALPN :: S2nTlsExtensionType
 pattern S2N_EXTENSION_ALPN = S2nTlsExtensionType 16
 
+-- | Certificate Transparency extension.
 pattern S2N_EXTENSION_CERTIFICATE_TRANSPARENCY :: S2nTlsExtensionType
 pattern S2N_EXTENSION_CERTIFICATE_TRANSPARENCY = S2nTlsExtensionType 18
 
+-- | Renegotiation info extension.
 pattern S2N_EXTENSION_RENEGOTIATION_INFO :: S2nTlsExtensionType
 pattern S2N_EXTENSION_RENEGOTIATION_INFO = S2nTlsExtensionType 65281
 
+-- | Maximum TLS fragment length.
 newtype S2nMaxFragLen = S2nMaxFragLen CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | Maximum fragment length of 512 bytes.
 pattern S2N_TLS_MAX_FRAG_LEN_512 :: S2nMaxFragLen
 pattern S2N_TLS_MAX_FRAG_LEN_512 = S2nMaxFragLen 1
 
+-- | Maximum fragment length of 1024 bytes.
 pattern S2N_TLS_MAX_FRAG_LEN_1024 :: S2nMaxFragLen
 pattern S2N_TLS_MAX_FRAG_LEN_1024 = S2nMaxFragLen 2
 
+-- | Maximum fragment length of 2048 bytes.
 pattern S2N_TLS_MAX_FRAG_LEN_2048 :: S2nMaxFragLen
 pattern S2N_TLS_MAX_FRAG_LEN_2048 = S2nMaxFragLen 3
 
+-- | Maximum fragment length of 4096 bytes.
 pattern S2N_TLS_MAX_FRAG_LEN_4096 :: S2nMaxFragLen
 pattern S2N_TLS_MAX_FRAG_LEN_4096 = S2nMaxFragLen 4
 
+-- | FIPS mode status.
 newtype S2nFipsMode = S2nFipsMode CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | FIPS mode disabled.
 pattern S2N_FIPS_MODE_DISABLED :: S2nFipsMode
 pattern S2N_FIPS_MODE_DISABLED = S2nFipsMode 0
 
+-- | FIPS mode enabled.
 pattern S2N_FIPS_MODE_ENABLED :: S2nFipsMode
 pattern S2N_FIPS_MODE_ENABLED = S2nFipsMode 1
 
+-- | OCSP status request type.
 newtype S2nStatusRequestType = S2nStatusRequestType CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | No status request.
 pattern S2N_STATUS_REQUEST_NONE :: S2nStatusRequestType
 pattern S2N_STATUS_REQUEST_NONE = S2nStatusRequestType 0
 
+-- | Request OCSP status.
 pattern S2N_STATUS_REQUEST_OCSP :: S2nStatusRequestType
 pattern S2N_STATUS_REQUEST_OCSP = S2nStatusRequestType 1
 
+-- | Certificate Transparency support level.
 newtype S2nCtSupportLevel = S2nCtSupportLevel CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | No Certificate Transparency support.
 pattern S2N_CT_SUPPORT_NONE :: S2nCtSupportLevel
 pattern S2N_CT_SUPPORT_NONE = S2nCtSupportLevel 0
 
+-- | Request Certificate Transparency.
 pattern S2N_CT_SUPPORT_REQUEST :: S2nCtSupportLevel
 pattern S2N_CT_SUPPORT_REQUEST = S2nCtSupportLevel 1
 
+-- | TLS alert behavior on warnings.
 newtype S2nAlertBehavior = S2nAlertBehavior CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | Fail on warning alerts.
 pattern S2N_ALERT_FAIL_ON_WARNINGS :: S2nAlertBehavior
 pattern S2N_ALERT_FAIL_ON_WARNINGS = S2nAlertBehavior 0
 
+-- | Ignore warning alerts.
 pattern S2N_ALERT_IGNORE_WARNINGS :: S2nAlertBehavior
 pattern S2N_ALERT_IGNORE_WARNINGS = S2nAlertBehavior 1
 
+-- | Client hello callback mode.
 newtype S2nClientHelloCbMode = S2nClientHelloCbMode CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | Blocking callback mode.
 pattern S2N_CLIENT_HELLO_CB_BLOCKING :: S2nClientHelloCbMode
 pattern S2N_CLIENT_HELLO_CB_BLOCKING = S2nClientHelloCbMode 0
 
+-- | Non-blocking callback mode.
 pattern S2N_CLIENT_HELLO_CB_NONBLOCKING :: S2nClientHelloCbMode
 pattern S2N_CLIENT_HELLO_CB_NONBLOCKING = S2nClientHelloCbMode 1
 
+-- | TLS signature algorithm.
 newtype S2nTlsSignatureAlgorithm = S2nTlsSignatureAlgorithm CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | Anonymous (no signature).
 pattern S2N_TLS_SIGNATURE_ANONYMOUS :: S2nTlsSignatureAlgorithm
 pattern S2N_TLS_SIGNATURE_ANONYMOUS = S2nTlsSignatureAlgorithm 0
 
+-- | RSA signature.
 pattern S2N_TLS_SIGNATURE_RSA :: S2nTlsSignatureAlgorithm
 pattern S2N_TLS_SIGNATURE_RSA = S2nTlsSignatureAlgorithm 1
 
+-- | ECDSA signature.
 pattern S2N_TLS_SIGNATURE_ECDSA :: S2nTlsSignatureAlgorithm
 pattern S2N_TLS_SIGNATURE_ECDSA = S2nTlsSignatureAlgorithm 3
 
+-- | RSA-PSS with RSAE key.
 pattern S2N_TLS_SIGNATURE_RSA_PSS_RSAE :: S2nTlsSignatureAlgorithm
 pattern S2N_TLS_SIGNATURE_RSA_PSS_RSAE = S2nTlsSignatureAlgorithm 4
 
+-- | RSA-PSS with PSS key.
 pattern S2N_TLS_SIGNATURE_RSA_PSS_PSS :: S2nTlsSignatureAlgorithm
 pattern S2N_TLS_SIGNATURE_RSA_PSS_PSS = S2nTlsSignatureAlgorithm 5
 
+-- | TLS hash algorithm.
 newtype S2nTlsHashAlgorithm = S2nTlsHashAlgorithm CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | No hash algorithm.
 pattern S2N_TLS_HASH_NONE :: S2nTlsHashAlgorithm
 pattern S2N_TLS_HASH_NONE = S2nTlsHashAlgorithm 0
 
+-- | MD5 hash (deprecated).
 pattern S2N_TLS_HASH_MD5 :: S2nTlsHashAlgorithm
 pattern S2N_TLS_HASH_MD5 = S2nTlsHashAlgorithm 1
 
+-- | SHA-1 hash (deprecated).
 pattern S2N_TLS_HASH_SHA1 :: S2nTlsHashAlgorithm
 pattern S2N_TLS_HASH_SHA1 = S2nTlsHashAlgorithm 2
 
+-- | SHA-224 hash.
 pattern S2N_TLS_HASH_SHA224 :: S2nTlsHashAlgorithm
 pattern S2N_TLS_HASH_SHA224 = S2nTlsHashAlgorithm 3
 
+-- | SHA-256 hash.
 pattern S2N_TLS_HASH_SHA256 :: S2nTlsHashAlgorithm
 pattern S2N_TLS_HASH_SHA256 = S2nTlsHashAlgorithm 4
 
+-- | SHA-384 hash.
 pattern S2N_TLS_HASH_SHA384 :: S2nTlsHashAlgorithm
 pattern S2N_TLS_HASH_SHA384 = S2nTlsHashAlgorithm 5
 
+-- | SHA-512 hash.
 pattern S2N_TLS_HASH_SHA512 :: S2nTlsHashAlgorithm
 pattern S2N_TLS_HASH_SHA512 = S2nTlsHashAlgorithm 6
 
+-- | Certificate SNI match result.
 newtype S2nCertSniMatch = S2nCertSniMatch CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | SNI matching not applicable.
 pattern S2N_CERT_SNI_MATCH_NOT_APPLICABLE :: S2nCertSniMatch
 pattern S2N_CERT_SNI_MATCH_NOT_APPLICABLE = S2nCertSniMatch 0
 
+-- | Certificate matches SNI.
 pattern S2N_CERT_SNI_MATCH :: S2nCertSniMatch
 pattern S2N_CERT_SNI_MATCH = S2nCertSniMatch 1
 
+-- | No matching certificate found.
 pattern S2N_CERT_SNI_NO_MATCH_FOUND :: S2nCertSniMatch
 pattern S2N_CERT_SNI_NO_MATCH_FOUND = S2nCertSniMatch 2
 
+-- | Peer key update request type.
 newtype S2nPeerKeyUpdate = S2nPeerKeyUpdate CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | Key update not requested.
 pattern S2N_KEY_UPDATE_NOT_REQUESTED :: S2nPeerKeyUpdate
 pattern S2N_KEY_UPDATE_NOT_REQUESTED = S2nPeerKeyUpdate 0
 
+-- | Key update requested.
 pattern S2N_KEY_UPDATE_REQUESTED :: S2nPeerKeyUpdate
 pattern S2N_KEY_UPDATE_REQUESTED = S2nPeerKeyUpdate 1
 
+-- | Verify-after-sign mode for signatures.
 newtype S2nVerifyAfterSign = S2nVerifyAfterSign CInt
   deriving (Eq, Ord, Show, Storable)
 
+-- | Verification after signing disabled.
 pattern S2N_VERIFY_AFTER_SIGN_DISABLED :: S2nVerifyAfterSign
 pattern S2N_VERIFY_AFTER_SIGN_DISABLED = S2nVerifyAfterSign 0
 
+-- | Verification after signing enabled.
 pattern S2N_VERIFY_AFTER_SIGN_ENABLED :: S2nVerifyAfterSign
 pattern S2N_VERIFY_AFTER_SIGN_ENABLED = S2nVerifyAfterSign 1
 
@@ -729,7 +844,7 @@ data S2nTlsFfi = S2nTlsFfi
   { missingSymbols :: [String]
   -- ^ List of symbol names that couldn't be loaded.
   -- Calling functions for these symbols will throw 'MissingSymbol'.
-  , -- Initialization & Cleanup
+  , -- | __Initialization & Cleanup__
     s2n_init :: IO (Either S2nError CInt)
   , s2n_cleanup :: IO (Either S2nError CInt)
   , s2n_cleanup_final :: IO (Either S2nError CInt)
@@ -737,20 +852,20 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_disable_atexit :: IO (Either S2nError CInt)
   , s2n_get_openssl_version :: IO CLong
   , s2n_get_fips_mode :: Ptr S2nFipsMode -> IO (Either S2nError CInt)
-  , -- Error Handling
+  , -- | __Error Handling__
     s2n_errno_location :: IO (Ptr CInt)
   , s2n_error_get_type :: CInt -> IO S2nErrorType
   , s2n_strerror :: CInt -> CString -> IO CString
   , s2n_strerror_debug :: CInt -> CString -> IO CString
   , s2n_strerror_name :: CInt -> IO CString
   , s2n_strerror_source :: CInt -> IO CString
-  , -- Stack Traces
+  , -- | __Stack Traces__
     s2n_stack_traces_enabled :: IO CBool
   , s2n_stack_traces_enabled_set :: CInt -> IO (Either S2nError CInt)
   , s2n_calculate_stacktrace :: IO (Either S2nError CInt)
   , s2n_free_stacktrace :: IO (Either S2nError CInt)
   , s2n_get_stacktrace :: Ptr S2nStacktrace -> IO (Either S2nError CInt)
-  , -- Config Management
+  , -- | __Config Management__
     s2n_config_new :: IO (Either S2nError (Ptr S2nConfig))
   , s2n_config_new_minimal :: IO (Either S2nError (Ptr S2nConfig))
   , s2n_config_free :: Ptr S2nConfig -> IO (Either S2nError CInt)
@@ -758,14 +873,14 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_config_free_cert_chain_and_key :: Ptr S2nConfig -> IO (Either S2nError CInt)
   , s2n_config_set_wall_clock :: Ptr S2nConfig -> S2nClockTimeNanoseconds -> Ptr () -> IO (Either S2nError CInt)
   , s2n_config_set_monotonic_clock :: Ptr S2nConfig -> S2nClockTimeNanoseconds -> Ptr () -> IO (Either S2nError CInt)
-  , -- Cache Callbacks
+  , -- | __Cache Callbacks__
     s2n_config_set_cache_store_callback :: Ptr S2nConfig -> S2nCacheStoreCallback -> Ptr () -> IO (Either S2nError CInt)
   , s2n_config_set_cache_retrieve_callback :: Ptr S2nConfig -> S2nCacheRetrieveCallback -> Ptr () -> IO (Either S2nError CInt)
   , s2n_config_set_cache_delete_callback :: Ptr S2nConfig -> S2nCacheDeleteCallback -> Ptr () -> IO (Either S2nError CInt)
-  , -- Memory & Random Callbacks
+  , -- | __Memory & Random Callbacks__
     s2n_mem_set_callbacks :: S2nMemInitCallback -> S2nMemCleanupCallback -> S2nMemMallocCallback -> S2nMemFreeCallback -> IO (Either S2nError CInt)
   , s2n_rand_set_callbacks :: S2nRandInitCallback -> S2nRandCleanupCallback -> S2nRandSeedCallback -> S2nRandMixCallback -> IO (Either S2nError CInt)
-  , -- Certificate Chain Management
+  , -- | __Certificate Chain Management__
     s2n_cert_chain_and_key_new :: IO (Either S2nError (Ptr S2nCertChainAndKey))
   , s2n_cert_chain_and_key_load_pem :: Ptr S2nCertChainAndKey -> CString -> CString -> IO (Either S2nError CInt)
   , s2n_cert_chain_and_key_load_pem_bytes :: Ptr S2nCertChainAndKey -> Ptr Word8 -> Word32 -> Ptr Word8 -> Word32 -> IO (Either S2nError CInt)
@@ -780,13 +895,13 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_config_add_cert_chain_and_key :: Ptr S2nConfig -> CString -> CString -> IO (Either S2nError CInt)
   , s2n_config_add_cert_chain_and_key_to_store :: Ptr S2nConfig -> Ptr S2nCertChainAndKey -> IO (Either S2nError CInt)
   , s2n_config_set_cert_chain_and_key_defaults :: Ptr S2nConfig -> Ptr (Ptr S2nCertChainAndKey) -> Word32 -> IO (Either S2nError CInt)
-  , -- Trust Store
+  , -- | __Trust Store__
     s2n_config_set_verification_ca_location :: Ptr S2nConfig -> CString -> CString -> IO (Either S2nError CInt)
   , s2n_config_add_pem_to_trust_store :: Ptr S2nConfig -> CString -> IO (Either S2nError CInt)
   , s2n_config_wipe_trust_store :: Ptr S2nConfig -> IO (Either S2nError CInt)
   , s2n_config_load_system_certs :: Ptr S2nConfig -> IO (Either S2nError CInt)
   , s2n_config_set_cert_authorities_from_trust_store :: Ptr S2nConfig -> IO (Either S2nError CInt)
-  , -- Verification & Validation
+  , -- | __Verification & Validation__
     s2n_config_set_verify_after_sign :: Ptr S2nConfig -> S2nVerifyAfterSign -> IO (Either S2nError CInt)
   , s2n_config_set_check_stapled_ocsp_response :: Ptr S2nConfig -> CInt -> IO (Either S2nError CInt)
   , s2n_config_disable_x509_time_verification :: Ptr S2nConfig -> IO (Either S2nError CInt)
@@ -794,20 +909,20 @@ data S2nTlsFfi = S2nTlsFfi
     s2n_config_disable_x509_verification :: Ptr S2nConfig -> IO (Either S2nError CInt)
   , s2n_config_set_max_cert_chain_depth :: Ptr S2nConfig -> Word16 -> IO (Either S2nError CInt)
   , s2n_config_set_verify_host_callback :: Ptr S2nConfig -> S2nVerifyHostFn -> Ptr () -> IO (Either S2nError CInt)
-  , -- DH Parameters
+  , -- | __DH Parameters__
     s2n_config_add_dhparams :: Ptr S2nConfig -> CString -> IO (Either S2nError CInt)
-  , -- Security Policies & Preferences
+  , -- | __Security Policies & Preferences__
     s2n_config_set_cipher_preferences :: Ptr S2nConfig -> CString -> IO (Either S2nError CInt)
   , s2n_config_append_protocol_preference :: Ptr S2nConfig -> Ptr Word8 -> Word8 -> IO (Either S2nError CInt)
   , s2n_config_set_protocol_preferences :: Ptr S2nConfig -> Ptr CString -> CInt -> IO (Either S2nError CInt)
   , s2n_config_set_status_request_type :: Ptr S2nConfig -> S2nStatusRequestType -> IO (Either S2nError CInt)
   , s2n_config_set_ct_support_level :: Ptr S2nConfig -> S2nCtSupportLevel -> IO (Either S2nError CInt)
   , s2n_config_set_alert_behavior :: Ptr S2nConfig -> S2nAlertBehavior -> IO (Either S2nError CInt)
-  , -- Extension Data
+  , -- | __Extension Data__
     s2n_config_set_extension_data :: Ptr S2nConfig -> S2nTlsExtensionType -> Ptr Word8 -> Word32 -> IO (Either S2nError CInt)
   , s2n_config_send_max_fragment_length :: Ptr S2nConfig -> S2nMaxFragLen -> IO (Either S2nError CInt)
   , s2n_config_accept_max_fragment_length :: Ptr S2nConfig -> IO (Either S2nError CInt)
-  , -- Session & Ticket Configuration
+  , -- | __Session & Ticket Configuration__
     s2n_config_set_session_state_lifetime :: Ptr S2nConfig -> Word64 -> IO (Either S2nError CInt)
   , s2n_config_set_session_tickets_onoff :: Ptr S2nConfig -> Word8 -> IO (Either S2nError CInt)
   , s2n_config_set_session_cache_onoff :: Ptr S2nConfig -> Word8 -> IO (Either S2nError CInt)
@@ -815,10 +930,10 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_config_set_ticket_decrypt_key_lifetime :: Ptr S2nConfig -> Word64 -> IO (Either S2nError CInt)
   , s2n_config_add_ticket_crypto_key :: Ptr S2nConfig -> Ptr Word8 -> Word32 -> Ptr Word8 -> Word32 -> Word64 -> IO (Either S2nError CInt)
   , s2n_config_require_ticket_forward_secrecy :: Ptr S2nConfig -> CInt -> IO (Either S2nError CInt)
-  , -- Buffer & I/O Configuration
+  , -- | __Buffer & I\/O Configuration__
     s2n_config_set_send_buffer_size :: Ptr S2nConfig -> Word32 -> IO (Either S2nError CInt)
   , s2n_config_set_recv_multi_record :: Ptr S2nConfig -> CInt -> IO (Either S2nError CInt)
-  , -- Miscellaneous Config
+  , -- | __Miscellaneous Config__
     s2n_config_set_ctx :: Ptr S2nConfig -> Ptr () -> IO (Either S2nError CInt)
   , s2n_config_get_ctx :: Ptr S2nConfig -> Ptr (Ptr ()) -> IO (Either S2nError CInt)
   , s2n_config_set_client_hello_cb :: Ptr S2nConfig -> S2nClientHelloFn -> Ptr () -> IO (Either S2nError CInt)
@@ -838,14 +953,14 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_config_set_early_data_cb :: Ptr S2nConfig -> S2nEarlyDataCb -> IO (Either S2nError CInt)
   , s2n_config_get_supported_groups :: Ptr S2nConfig -> Ptr Word16 -> Word16 -> Ptr Word16 -> IO (Either S2nError CInt)
   , s2n_config_set_serialization_version :: Ptr S2nConfig -> S2nSerializationVersion -> IO (Either S2nError CInt)
-  , -- Connection Creation & Management
+  , -- | __Connection Creation & Management__
     s2n_connection_new :: S2nMode -> IO (Either S2nError (Ptr S2nConnection))
   , s2n_connection_set_config :: Ptr S2nConnection -> Ptr S2nConfig -> IO (Either S2nError CInt)
   , s2n_connection_set_ctx :: Ptr S2nConnection -> Ptr () -> IO (Either S2nError CInt)
   , s2n_connection_get_ctx :: Ptr S2nConnection -> IO (Either S2nError (Ptr ()))
   , s2n_client_hello_cb_done :: Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_connection_server_name_extension_used :: Ptr S2nConnection -> IO (Either S2nError CInt)
-  , -- Client Hello Access
+  , -- | __Client Hello Access__
     s2n_connection_get_client_hello :: Ptr S2nConnection -> IO (Either S2nError (Ptr S2nClientHello))
   , s2n_client_hello_parse_message :: Ptr Word8 -> Word32 -> IO (Either S2nError (Ptr S2nClientHello))
   , s2n_client_hello_free :: Ptr (Ptr S2nClientHello) -> IO (Either S2nError CInt)
@@ -868,7 +983,7 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_client_hello_get_server_name_length :: Ptr S2nClientHello -> Ptr Word16 -> IO (Either S2nError CInt)
   , s2n_client_hello_get_server_name :: Ptr S2nClientHello -> Ptr Word8 -> Word16 -> Ptr Word16 -> IO (Either S2nError CInt)
   , s2n_client_hello_get_legacy_record_version :: Ptr S2nClientHello -> Ptr Word8 -> IO (Either S2nError CInt)
-  , -- File Descriptor & I/O
+  , -- | __File Descriptor & I\/O__
     s2n_connection_set_fd :: Ptr S2nConnection -> CInt -> IO (Either S2nError CInt)
   , s2n_connection_set_read_fd :: Ptr S2nConnection -> CInt -> IO (Either S2nError CInt)
   , s2n_connection_set_write_fd :: Ptr S2nConnection -> CInt -> IO (Either S2nError CInt)
@@ -879,32 +994,32 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_connection_set_send_ctx :: Ptr S2nConnection -> Ptr () -> IO (Either S2nError CInt)
   , s2n_connection_set_recv_cb :: Ptr S2nConnection -> S2nRecvFn -> IO (Either S2nError CInt)
   , s2n_connection_set_send_cb :: Ptr S2nConnection -> S2nSendFn -> IO (Either S2nError CInt)
-  , -- Connection Preferences
+  , -- | __Connection Preferences__
     s2n_connection_prefer_throughput :: Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_connection_prefer_low_latency :: Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_connection_set_recv_buffering :: Ptr S2nConnection -> CInt -> IO (Either S2nError CInt)
   , s2n_peek_buffered :: Ptr S2nConnection -> IO Word32
   , s2n_connection_set_dynamic_buffers :: Ptr S2nConnection -> CInt -> IO (Either S2nError CInt)
   , s2n_connection_set_dynamic_record_threshold :: Ptr S2nConnection -> Word32 -> Word16 -> IO (Either S2nError CInt)
-  , -- Host Verification
+  , -- | __Host Verification__
     s2n_connection_set_verify_host_callback :: Ptr S2nConnection -> S2nVerifyHostFn -> Ptr () -> IO (Either S2nError CInt)
-  , -- Blinding & Security
+  , -- | __Blinding & Security__
     s2n_connection_set_blinding :: Ptr S2nConnection -> S2nBlinding -> IO (Either S2nError CInt)
   , s2n_connection_get_delay :: Ptr S2nConnection -> IO Word64
-  , -- Cipher & Protocol Configuration
+  , -- | __Cipher & Protocol Configuration__
     s2n_connection_set_cipher_preferences :: Ptr S2nConnection -> CString -> IO (Either S2nError CInt)
   , s2n_connection_request_key_update :: Ptr S2nConnection -> S2nPeerKeyUpdate -> IO (Either S2nError CInt)
   , s2n_connection_append_protocol_preference :: Ptr S2nConnection -> Ptr Word8 -> Word8 -> IO (Either S2nError CInt)
   , s2n_connection_set_protocol_preferences :: Ptr S2nConnection -> Ptr CString -> CInt -> IO (Either S2nError CInt)
-  , -- Server Name (SNI)
+  , -- | __Server Name (SNI)__
     s2n_set_server_name :: Ptr S2nConnection -> CString -> IO (Either S2nError CInt)
   , s2n_get_server_name :: Ptr S2nConnection -> IO (Either S2nError CString)
-  , -- Application Protocol (ALPN)
+  , -- | __Application Protocol (ALPN)__
     s2n_get_application_protocol :: Ptr S2nConnection -> IO (Either S2nError CString)
-  , -- OCSP & Certificate Transparency
+  , -- | __OCSP & Certificate Transparency__
     s2n_connection_get_ocsp_response :: Ptr S2nConnection -> Ptr Word32 -> IO (Either S2nError (Ptr Word8))
   , s2n_connection_get_sct_list :: Ptr S2nConnection -> Ptr Word32 -> IO (Either S2nError (Ptr Word8))
-  , -- Handshake & TLS Operations
+  , -- | __Handshake & TLS Operations__
     s2n_negotiate :: Ptr S2nConnection -> Ptr S2nBlockedStatus -> IO (Either S2nError CInt)
   , s2n_send :: Ptr S2nConnection -> Ptr () -> CSsize -> Ptr S2nBlockedStatus -> IO (Either S2nError CSsize)
   , s2n_recv :: Ptr S2nConnection -> Ptr () -> CSsize -> Ptr S2nBlockedStatus -> IO (Either S2nError CSsize)
@@ -915,12 +1030,12 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_connection_free :: Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_shutdown :: Ptr S2nConnection -> Ptr S2nBlockedStatus -> IO (Either S2nError CInt)
   , s2n_shutdown_send :: Ptr S2nConnection -> Ptr S2nBlockedStatus -> IO (Either S2nError CInt)
-  , -- Client Authentication
+  , -- | __Client Authentication__
     s2n_connection_get_client_auth_type :: Ptr S2nConnection -> Ptr S2nCertAuthType -> IO (Either S2nError CInt)
   , s2n_connection_set_client_auth_type :: Ptr S2nConnection -> S2nCertAuthType -> IO (Either S2nError CInt)
   , s2n_connection_get_client_cert_chain :: Ptr S2nConnection -> Ptr (Ptr Word8) -> Ptr Word32 -> IO (Either S2nError CInt)
   , s2n_connection_client_cert_used :: Ptr S2nConnection -> IO (Either S2nError CInt)
-  , -- Session Management
+  , -- | __Session Management__
     s2n_connection_add_new_tickets_to_send :: Ptr S2nConnection -> Word8 -> IO (Either S2nError CInt)
   , s2n_connection_get_tickets_sent :: Ptr S2nConnection -> Ptr Word16 -> IO (Either S2nError CInt)
   , s2n_connection_set_server_keying_material_lifetime :: Ptr S2nConnection -> Word32 -> IO (Either S2nError CInt)
@@ -934,7 +1049,7 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_connection_get_session_id_length :: Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_connection_get_session_id :: Ptr S2nConnection -> Ptr Word8 -> CSize -> IO (Either S2nError CInt)
   , s2n_connection_is_session_resumed :: Ptr S2nConnection -> IO (Either S2nError CInt)
-  , -- Certificate Information
+  , -- | __Certificate Information__
     s2n_connection_is_ocsp_stapled :: Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_connection_get_selected_signature_algorithm :: Ptr S2nConnection -> Ptr S2nTlsSignatureAlgorithm -> IO (Either S2nError CInt)
   , s2n_connection_get_selected_digest_algorithm :: Ptr S2nConnection -> Ptr S2nTlsHashAlgorithm -> IO (Either S2nError CInt)
@@ -950,7 +1065,7 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_cert_get_x509_extension_value :: Ptr S2nCert -> Ptr Word8 -> Ptr Word8 -> Ptr Word32 -> Ptr CInt -> IO (Either S2nError CInt)
   , s2n_cert_get_utf8_string_from_extension_data_length :: Ptr Word8 -> Word32 -> Ptr Word32 -> IO (Either S2nError CInt)
   , s2n_cert_get_utf8_string_from_extension_data :: Ptr Word8 -> Word32 -> Ptr Word8 -> Ptr Word32 -> IO (Either S2nError CInt)
-  , -- Pre-Shared Keys (PSK)
+  , -- | __Pre-Shared Keys (PSK)__
     s2n_external_psk_new :: IO (Either S2nError (Ptr S2nPsk))
   , s2n_psk_free :: Ptr (Ptr S2nPsk) -> IO (Either S2nError CInt)
   , s2n_psk_set_identity :: Ptr S2nPsk -> Ptr Word8 -> Word16 -> IO (Either S2nError CInt)
@@ -970,15 +1085,15 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_psk_configure_early_data :: Ptr S2nPsk -> Word32 -> Word8 -> Word8 -> IO (Either S2nError CInt)
   , s2n_psk_set_application_protocol :: Ptr S2nPsk -> Ptr Word8 -> Word8 -> IO (Either S2nError CInt)
   , s2n_psk_set_early_data_context :: Ptr S2nPsk -> Ptr Word8 -> Word16 -> IO (Either S2nError CInt)
-  , -- Connection Statistics
+  , -- | __Connection Statistics__
     s2n_connection_get_wire_bytes_in :: Ptr S2nConnection -> IO Word64
   , s2n_connection_get_wire_bytes_out :: Ptr S2nConnection -> IO Word64
-  , -- Protocol Version Information
+  , -- | __Protocol Version Information__
     s2n_connection_get_client_protocol_version :: Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_connection_get_server_protocol_version :: Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_connection_get_actual_protocol_version :: Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_connection_get_client_hello_version :: Ptr S2nConnection -> IO (Either S2nError CInt)
-  , -- Cipher & Security Information
+  , -- | __Cipher & Security Information__
     s2n_connection_get_cipher :: Ptr S2nConnection -> IO (Either S2nError CString)
   , s2n_connection_get_certificate_match :: Ptr S2nConnection -> Ptr S2nCertSniMatch -> IO (Either S2nError CInt)
   , s2n_connection_get_master_secret :: Ptr S2nConnection -> Ptr Word8 -> CSize -> IO (Either S2nError CInt)
@@ -992,7 +1107,7 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_connection_get_alert :: Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_connection_get_handshake_type_name :: Ptr S2nConnection -> IO (Either S2nError CString)
   , s2n_connection_get_last_message_name :: Ptr S2nConnection -> IO (Either S2nError CString)
-  , -- Async Private Key Operations
+  , -- | __Async Private Key Operations__
     s2n_async_pkey_op_perform :: Ptr S2nAsyncPkeyOp -> Ptr S2nCertPrivateKey -> IO (Either S2nError CInt)
   , s2n_async_pkey_op_apply :: Ptr S2nAsyncPkeyOp -> Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_async_pkey_op_free :: Ptr S2nAsyncPkeyOp -> IO (Either S2nError CInt)
@@ -1000,7 +1115,7 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_async_pkey_op_get_input_size :: Ptr S2nAsyncPkeyOp -> Ptr Word32 -> IO (Either S2nError CInt)
   , s2n_async_pkey_op_get_input :: Ptr S2nAsyncPkeyOp -> Ptr Word8 -> Word32 -> IO (Either S2nError CInt)
   , s2n_async_pkey_op_set_output :: Ptr S2nAsyncPkeyOp -> Ptr Word8 -> Word32 -> IO (Either S2nError CInt)
-  , -- Early Data
+  , -- | __Early Data__
     s2n_connection_set_server_max_early_data_size :: Ptr S2nConnection -> Word32 -> IO (Either S2nError CInt)
   , s2n_connection_set_server_early_data_context :: Ptr S2nConnection -> Ptr Word8 -> Word16 -> IO (Either S2nError CInt)
   , s2n_connection_get_early_data_status :: Ptr S2nConnection -> Ptr S2nEarlyDataStatus -> IO (Either S2nError CInt)
@@ -1012,7 +1127,7 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_offered_early_data_get_context :: Ptr S2nOfferedEarlyData -> Ptr Word8 -> Word16 -> IO (Either S2nError CInt)
   , s2n_offered_early_data_reject :: Ptr S2nOfferedEarlyData -> IO (Either S2nError CInt)
   , s2n_offered_early_data_accept :: Ptr S2nOfferedEarlyData -> IO (Either S2nError CInt)
-  , -- Connection Serialization
+  , -- | __Connection Serialization__
     s2n_connection_serialization_length :: Ptr S2nConnection -> Ptr Word32 -> IO (Either S2nError CInt)
   , s2n_connection_serialize :: Ptr S2nConnection -> Ptr Word8 -> Word32 -> IO (Either S2nError CInt)
   , s2n_connection_deserialize :: Ptr S2nConnection -> Ptr Word8 -> Word32 -> IO (Either S2nError CInt)
