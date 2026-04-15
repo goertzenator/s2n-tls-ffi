@@ -183,7 +183,7 @@ import Data.Word (Word16, Word32, Word64, Word8)
 import Foreign.C.String (CString, castCharToCChar, peekCString)
 import Foreign.C.Types (CBool (..), CInt (..), CLong (..), CSize (..))
 import Foreign.Marshal.Array (pokeArray0)
-import Foreign.Ptr (FunPtr, Ptr, nullFunPtr, plusPtr)
+import Foreign.Ptr (FunPtr, Ptr, plusPtr)
 import Foreign.Storable (Storable (..))
 import System.Posix.Types (CSsize (..))
 
@@ -844,44 +844,44 @@ data S2nTlsFfi = S2nTlsFfi
   { missingSymbols :: [String]
   -- ^ List of symbol names that couldn't be loaded.
   -- Calling functions for these symbols will throw 'MissingSymbol'.
-  , -- | __Initialization & Cleanup__
-    s2n_init :: IO (Either S2nError CInt)
+  , s2n_init :: IO (Either S2nError CInt)
+  -- ^ __Initialization & Cleanup__
   , s2n_cleanup :: IO (Either S2nError CInt)
   , s2n_cleanup_final :: IO (Either S2nError CInt)
   , s2n_crypto_disable_init :: IO (Either S2nError CInt)
   , s2n_disable_atexit :: IO (Either S2nError CInt)
   , s2n_get_openssl_version :: IO CLong
   , s2n_get_fips_mode :: Ptr S2nFipsMode -> IO (Either S2nError CInt)
-  , -- | __Error Handling__
-    s2n_errno_location :: IO (Ptr CInt)
+  , s2n_errno_location :: IO (Ptr CInt)
+  -- ^ __Error Handling__
   , s2n_error_get_type :: CInt -> IO S2nErrorType
   , s2n_strerror :: CInt -> CString -> IO CString
   , s2n_strerror_debug :: CInt -> CString -> IO CString
   , s2n_strerror_name :: CInt -> IO CString
   , s2n_strerror_source :: CInt -> IO CString
-  , -- | __Stack Traces__
-    s2n_stack_traces_enabled :: IO CBool
+  , s2n_stack_traces_enabled :: IO CBool
+  -- ^ __Stack Traces__
   , s2n_stack_traces_enabled_set :: CInt -> IO (Either S2nError CInt)
   , s2n_calculate_stacktrace :: IO (Either S2nError CInt)
   , s2n_free_stacktrace :: IO (Either S2nError CInt)
   , s2n_get_stacktrace :: Ptr S2nStacktrace -> IO (Either S2nError CInt)
-  , -- | __Config Management__
-    s2n_config_new :: IO (Either S2nError (Ptr S2nConfig))
+  , s2n_config_new :: IO (Either S2nError (Ptr S2nConfig))
+  -- ^ __Config Management__
   , s2n_config_new_minimal :: IO (Either S2nError (Ptr S2nConfig))
   , s2n_config_free :: Ptr S2nConfig -> IO (Either S2nError CInt)
   , s2n_config_free_dhparams :: Ptr S2nConfig -> IO (Either S2nError CInt)
   , s2n_config_free_cert_chain_and_key :: Ptr S2nConfig -> IO (Either S2nError CInt)
   , s2n_config_set_wall_clock :: Ptr S2nConfig -> S2nClockTimeNanoseconds -> Ptr () -> IO (Either S2nError CInt)
   , s2n_config_set_monotonic_clock :: Ptr S2nConfig -> S2nClockTimeNanoseconds -> Ptr () -> IO (Either S2nError CInt)
-  , -- | __Cache Callbacks__
-    s2n_config_set_cache_store_callback :: Ptr S2nConfig -> S2nCacheStoreCallback -> Ptr () -> IO (Either S2nError CInt)
+  , s2n_config_set_cache_store_callback :: Ptr S2nConfig -> S2nCacheStoreCallback -> Ptr () -> IO (Either S2nError CInt)
+  -- ^ __Cache Callbacks__
   , s2n_config_set_cache_retrieve_callback :: Ptr S2nConfig -> S2nCacheRetrieveCallback -> Ptr () -> IO (Either S2nError CInt)
   , s2n_config_set_cache_delete_callback :: Ptr S2nConfig -> S2nCacheDeleteCallback -> Ptr () -> IO (Either S2nError CInt)
-  , -- | __Memory & Random Callbacks__
-    s2n_mem_set_callbacks :: S2nMemInitCallback -> S2nMemCleanupCallback -> S2nMemMallocCallback -> S2nMemFreeCallback -> IO (Either S2nError CInt)
+  , s2n_mem_set_callbacks :: S2nMemInitCallback -> S2nMemCleanupCallback -> S2nMemMallocCallback -> S2nMemFreeCallback -> IO (Either S2nError CInt)
+  -- ^ __Memory & Random Callbacks__
   , s2n_rand_set_callbacks :: S2nRandInitCallback -> S2nRandCleanupCallback -> S2nRandSeedCallback -> S2nRandMixCallback -> IO (Either S2nError CInt)
-  , -- | __Certificate Chain Management__
-    s2n_cert_chain_and_key_new :: IO (Either S2nError (Ptr S2nCertChainAndKey))
+  , s2n_cert_chain_and_key_new :: IO (Either S2nError (Ptr S2nCertChainAndKey))
+  -- ^ __Certificate Chain Management__
   , s2n_cert_chain_and_key_load_pem :: Ptr S2nCertChainAndKey -> CString -> CString -> IO (Either S2nError CInt)
   , s2n_cert_chain_and_key_load_pem_bytes :: Ptr S2nCertChainAndKey -> Ptr Word8 -> Word32 -> Ptr Word8 -> Word32 -> IO (Either S2nError CInt)
   , s2n_cert_chain_and_key_load_public_pem_bytes :: Ptr S2nCertChainAndKey -> Ptr Word8 -> Word32 -> IO (Either S2nError CInt)
@@ -895,46 +895,46 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_config_add_cert_chain_and_key :: Ptr S2nConfig -> CString -> CString -> IO (Either S2nError CInt)
   , s2n_config_add_cert_chain_and_key_to_store :: Ptr S2nConfig -> Ptr S2nCertChainAndKey -> IO (Either S2nError CInt)
   , s2n_config_set_cert_chain_and_key_defaults :: Ptr S2nConfig -> Ptr (Ptr S2nCertChainAndKey) -> Word32 -> IO (Either S2nError CInt)
-  , -- | __Trust Store__
-    s2n_config_set_verification_ca_location :: Ptr S2nConfig -> CString -> CString -> IO (Either S2nError CInt)
+  , s2n_config_set_verification_ca_location :: Ptr S2nConfig -> CString -> CString -> IO (Either S2nError CInt)
+  -- ^ __Trust Store__
   , s2n_config_add_pem_to_trust_store :: Ptr S2nConfig -> CString -> IO (Either S2nError CInt)
   , s2n_config_wipe_trust_store :: Ptr S2nConfig -> IO (Either S2nError CInt)
   , s2n_config_load_system_certs :: Ptr S2nConfig -> IO (Either S2nError CInt)
   , s2n_config_set_cert_authorities_from_trust_store :: Ptr S2nConfig -> IO (Either S2nError CInt)
-  , -- | __Verification & Validation__
-    s2n_config_set_verify_after_sign :: Ptr S2nConfig -> S2nVerifyAfterSign -> IO (Either S2nError CInt)
+  , s2n_config_set_verify_after_sign :: Ptr S2nConfig -> S2nVerifyAfterSign -> IO (Either S2nError CInt)
+  -- ^ __Verification & Validation__
   , s2n_config_set_check_stapled_ocsp_response :: Ptr S2nConfig -> CInt -> IO (Either S2nError CInt)
   , s2n_config_disable_x509_time_verification :: Ptr S2nConfig -> IO (Either S2nError CInt)
   , -- , s2n_config_disable_x509_intent_verification :: Ptr S2nConfig -> IO (Either S2nError CInt)
     s2n_config_disable_x509_verification :: Ptr S2nConfig -> IO (Either S2nError CInt)
   , s2n_config_set_max_cert_chain_depth :: Ptr S2nConfig -> Word16 -> IO (Either S2nError CInt)
   , s2n_config_set_verify_host_callback :: Ptr S2nConfig -> S2nVerifyHostFn -> Ptr () -> IO (Either S2nError CInt)
-  , -- | __DH Parameters__
-    s2n_config_add_dhparams :: Ptr S2nConfig -> CString -> IO (Either S2nError CInt)
-  , -- | __Security Policies & Preferences__
-    s2n_config_set_cipher_preferences :: Ptr S2nConfig -> CString -> IO (Either S2nError CInt)
+  , s2n_config_add_dhparams :: Ptr S2nConfig -> CString -> IO (Either S2nError CInt)
+  -- ^ __DH Parameters__
+  , s2n_config_set_cipher_preferences :: Ptr S2nConfig -> CString -> IO (Either S2nError CInt)
+  -- ^ __Security Policies & Preferences__
   , s2n_config_append_protocol_preference :: Ptr S2nConfig -> Ptr Word8 -> Word8 -> IO (Either S2nError CInt)
   , s2n_config_set_protocol_preferences :: Ptr S2nConfig -> Ptr CString -> CInt -> IO (Either S2nError CInt)
   , s2n_config_set_status_request_type :: Ptr S2nConfig -> S2nStatusRequestType -> IO (Either S2nError CInt)
   , s2n_config_set_ct_support_level :: Ptr S2nConfig -> S2nCtSupportLevel -> IO (Either S2nError CInt)
   , s2n_config_set_alert_behavior :: Ptr S2nConfig -> S2nAlertBehavior -> IO (Either S2nError CInt)
-  , -- | __Extension Data__
-    s2n_config_set_extension_data :: Ptr S2nConfig -> S2nTlsExtensionType -> Ptr Word8 -> Word32 -> IO (Either S2nError CInt)
+  , s2n_config_set_extension_data :: Ptr S2nConfig -> S2nTlsExtensionType -> Ptr Word8 -> Word32 -> IO (Either S2nError CInt)
+  -- ^ __Extension Data__
   , s2n_config_send_max_fragment_length :: Ptr S2nConfig -> S2nMaxFragLen -> IO (Either S2nError CInt)
   , s2n_config_accept_max_fragment_length :: Ptr S2nConfig -> IO (Either S2nError CInt)
-  , -- | __Session & Ticket Configuration__
-    s2n_config_set_session_state_lifetime :: Ptr S2nConfig -> Word64 -> IO (Either S2nError CInt)
+  , s2n_config_set_session_state_lifetime :: Ptr S2nConfig -> Word64 -> IO (Either S2nError CInt)
+  -- ^ __Session & Ticket Configuration__
   , s2n_config_set_session_tickets_onoff :: Ptr S2nConfig -> Word8 -> IO (Either S2nError CInt)
   , s2n_config_set_session_cache_onoff :: Ptr S2nConfig -> Word8 -> IO (Either S2nError CInt)
   , s2n_config_set_ticket_encrypt_decrypt_key_lifetime :: Ptr S2nConfig -> Word64 -> IO (Either S2nError CInt)
   , s2n_config_set_ticket_decrypt_key_lifetime :: Ptr S2nConfig -> Word64 -> IO (Either S2nError CInt)
   , s2n_config_add_ticket_crypto_key :: Ptr S2nConfig -> Ptr Word8 -> Word32 -> Ptr Word8 -> Word32 -> Word64 -> IO (Either S2nError CInt)
   , s2n_config_require_ticket_forward_secrecy :: Ptr S2nConfig -> CInt -> IO (Either S2nError CInt)
-  , -- | __Buffer & I\/O Configuration__
-    s2n_config_set_send_buffer_size :: Ptr S2nConfig -> Word32 -> IO (Either S2nError CInt)
+  , s2n_config_set_send_buffer_size :: Ptr S2nConfig -> Word32 -> IO (Either S2nError CInt)
+  -- ^ __Buffer & I\/O Configuration__
   , s2n_config_set_recv_multi_record :: Ptr S2nConfig -> CInt -> IO (Either S2nError CInt)
-  , -- | __Miscellaneous Config__
-    s2n_config_set_ctx :: Ptr S2nConfig -> Ptr () -> IO (Either S2nError CInt)
+  , s2n_config_set_ctx :: Ptr S2nConfig -> Ptr () -> IO (Either S2nError CInt)
+  -- ^ __Miscellaneous Config__
   , s2n_config_get_ctx :: Ptr S2nConfig -> Ptr (Ptr ()) -> IO (Either S2nError CInt)
   , s2n_config_set_client_hello_cb :: Ptr S2nConfig -> S2nClientHelloFn -> Ptr () -> IO (Either S2nError CInt)
   , s2n_config_set_client_hello_cb_mode :: Ptr S2nConfig -> S2nClientHelloCbMode -> IO (Either S2nError CInt)
@@ -953,15 +953,15 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_config_set_early_data_cb :: Ptr S2nConfig -> S2nEarlyDataCb -> IO (Either S2nError CInt)
   , s2n_config_get_supported_groups :: Ptr S2nConfig -> Ptr Word16 -> Word16 -> Ptr Word16 -> IO (Either S2nError CInt)
   , s2n_config_set_serialization_version :: Ptr S2nConfig -> S2nSerializationVersion -> IO (Either S2nError CInt)
-  , -- | __Connection Creation & Management__
-    s2n_connection_new :: S2nMode -> IO (Either S2nError (Ptr S2nConnection))
+  , s2n_connection_new :: S2nMode -> IO (Either S2nError (Ptr S2nConnection))
+  -- ^ __Connection Creation & Management__
   , s2n_connection_set_config :: Ptr S2nConnection -> Ptr S2nConfig -> IO (Either S2nError CInt)
   , s2n_connection_set_ctx :: Ptr S2nConnection -> Ptr () -> IO (Either S2nError CInt)
   , s2n_connection_get_ctx :: Ptr S2nConnection -> IO (Either S2nError (Ptr ()))
   , s2n_client_hello_cb_done :: Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_connection_server_name_extension_used :: Ptr S2nConnection -> IO (Either S2nError CInt)
-  , -- | __Client Hello Access__
-    s2n_connection_get_client_hello :: Ptr S2nConnection -> IO (Either S2nError (Ptr S2nClientHello))
+  , s2n_connection_get_client_hello :: Ptr S2nConnection -> IO (Either S2nError (Ptr S2nClientHello))
+  -- ^ __Client Hello Access__
   , s2n_client_hello_parse_message :: Ptr Word8 -> Word32 -> IO (Either S2nError (Ptr S2nClientHello))
   , s2n_client_hello_free :: Ptr (Ptr S2nClientHello) -> IO (Either S2nError CInt)
   , s2n_client_hello_get_raw_message_length :: Ptr S2nClientHello -> IO (Either S2nError CSsize)
@@ -983,8 +983,8 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_client_hello_get_server_name_length :: Ptr S2nClientHello -> Ptr Word16 -> IO (Either S2nError CInt)
   , s2n_client_hello_get_server_name :: Ptr S2nClientHello -> Ptr Word8 -> Word16 -> Ptr Word16 -> IO (Either S2nError CInt)
   , s2n_client_hello_get_legacy_record_version :: Ptr S2nClientHello -> Ptr Word8 -> IO (Either S2nError CInt)
-  , -- | __File Descriptor & I\/O__
-    s2n_connection_set_fd :: Ptr S2nConnection -> CInt -> IO (Either S2nError CInt)
+  , s2n_connection_set_fd :: Ptr S2nConnection -> CInt -> IO (Either S2nError CInt)
+  -- ^ __File Descriptor & I\/O__
   , s2n_connection_set_read_fd :: Ptr S2nConnection -> CInt -> IO (Either S2nError CInt)
   , s2n_connection_set_write_fd :: Ptr S2nConnection -> CInt -> IO (Either S2nError CInt)
   , s2n_connection_get_read_fd :: Ptr S2nConnection -> Ptr CInt -> IO (Either S2nError CInt)
@@ -994,33 +994,33 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_connection_set_send_ctx :: Ptr S2nConnection -> Ptr () -> IO (Either S2nError CInt)
   , s2n_connection_set_recv_cb :: Ptr S2nConnection -> S2nRecvFn -> IO (Either S2nError CInt)
   , s2n_connection_set_send_cb :: Ptr S2nConnection -> S2nSendFn -> IO (Either S2nError CInt)
-  , -- | __Connection Preferences__
-    s2n_connection_prefer_throughput :: Ptr S2nConnection -> IO (Either S2nError CInt)
+  , s2n_connection_prefer_throughput :: Ptr S2nConnection -> IO (Either S2nError CInt)
+  -- ^ __Connection Preferences__
   , s2n_connection_prefer_low_latency :: Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_connection_set_recv_buffering :: Ptr S2nConnection -> CInt -> IO (Either S2nError CInt)
   , s2n_peek_buffered :: Ptr S2nConnection -> IO Word32
   , s2n_connection_set_dynamic_buffers :: Ptr S2nConnection -> CInt -> IO (Either S2nError CInt)
   , s2n_connection_set_dynamic_record_threshold :: Ptr S2nConnection -> Word32 -> Word16 -> IO (Either S2nError CInt)
-  , -- | __Host Verification__
-    s2n_connection_set_verify_host_callback :: Ptr S2nConnection -> S2nVerifyHostFn -> Ptr () -> IO (Either S2nError CInt)
-  , -- | __Blinding & Security__
-    s2n_connection_set_blinding :: Ptr S2nConnection -> S2nBlinding -> IO (Either S2nError CInt)
+  , s2n_connection_set_verify_host_callback :: Ptr S2nConnection -> S2nVerifyHostFn -> Ptr () -> IO (Either S2nError CInt)
+  -- ^ __Host Verification__
+  , s2n_connection_set_blinding :: Ptr S2nConnection -> S2nBlinding -> IO (Either S2nError CInt)
+  -- ^ __Blinding & Security__
   , s2n_connection_get_delay :: Ptr S2nConnection -> IO Word64
-  , -- | __Cipher & Protocol Configuration__
-    s2n_connection_set_cipher_preferences :: Ptr S2nConnection -> CString -> IO (Either S2nError CInt)
+  , s2n_connection_set_cipher_preferences :: Ptr S2nConnection -> CString -> IO (Either S2nError CInt)
+  -- ^ __Cipher & Protocol Configuration__
   , s2n_connection_request_key_update :: Ptr S2nConnection -> S2nPeerKeyUpdate -> IO (Either S2nError CInt)
   , s2n_connection_append_protocol_preference :: Ptr S2nConnection -> Ptr Word8 -> Word8 -> IO (Either S2nError CInt)
   , s2n_connection_set_protocol_preferences :: Ptr S2nConnection -> Ptr CString -> CInt -> IO (Either S2nError CInt)
-  , -- | __Server Name (SNI)__
-    s2n_set_server_name :: Ptr S2nConnection -> CString -> IO (Either S2nError CInt)
+  , s2n_set_server_name :: Ptr S2nConnection -> CString -> IO (Either S2nError CInt)
+  -- ^ __Server Name (SNI)__
   , s2n_get_server_name :: Ptr S2nConnection -> IO (Either S2nError CString)
-  , -- | __Application Protocol (ALPN)__
-    s2n_get_application_protocol :: Ptr S2nConnection -> IO (Either S2nError CString)
-  , -- | __OCSP & Certificate Transparency__
-    s2n_connection_get_ocsp_response :: Ptr S2nConnection -> Ptr Word32 -> IO (Either S2nError (Ptr Word8))
+  , s2n_get_application_protocol :: Ptr S2nConnection -> IO (Either S2nError CString)
+  -- ^ __Application Protocol (ALPN)__
+  , s2n_connection_get_ocsp_response :: Ptr S2nConnection -> Ptr Word32 -> IO (Either S2nError (Ptr Word8))
+  -- ^ __OCSP & Certificate Transparency__
   , s2n_connection_get_sct_list :: Ptr S2nConnection -> Ptr Word32 -> IO (Either S2nError (Ptr Word8))
-  , -- | __Handshake & TLS Operations__
-    s2n_negotiate :: Ptr S2nConnection -> Ptr S2nBlockedStatus -> IO (Either S2nError CInt)
+  , s2n_negotiate :: Ptr S2nConnection -> Ptr S2nBlockedStatus -> IO (Either S2nError CInt)
+  -- ^ __Handshake & TLS Operations__
   , s2n_send :: Ptr S2nConnection -> Ptr () -> CSsize -> Ptr S2nBlockedStatus -> IO (Either S2nError CSsize)
   , s2n_recv :: Ptr S2nConnection -> Ptr () -> CSsize -> Ptr S2nBlockedStatus -> IO (Either S2nError CSsize)
   , s2n_peek :: Ptr S2nConnection -> IO Word32
@@ -1030,13 +1030,13 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_connection_free :: Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_shutdown :: Ptr S2nConnection -> Ptr S2nBlockedStatus -> IO (Either S2nError CInt)
   , s2n_shutdown_send :: Ptr S2nConnection -> Ptr S2nBlockedStatus -> IO (Either S2nError CInt)
-  , -- | __Client Authentication__
-    s2n_connection_get_client_auth_type :: Ptr S2nConnection -> Ptr S2nCertAuthType -> IO (Either S2nError CInt)
+  , s2n_connection_get_client_auth_type :: Ptr S2nConnection -> Ptr S2nCertAuthType -> IO (Either S2nError CInt)
+  -- ^ __Client Authentication__
   , s2n_connection_set_client_auth_type :: Ptr S2nConnection -> S2nCertAuthType -> IO (Either S2nError CInt)
   , s2n_connection_get_client_cert_chain :: Ptr S2nConnection -> Ptr (Ptr Word8) -> Ptr Word32 -> IO (Either S2nError CInt)
   , s2n_connection_client_cert_used :: Ptr S2nConnection -> IO (Either S2nError CInt)
-  , -- | __Session Management__
-    s2n_connection_add_new_tickets_to_send :: Ptr S2nConnection -> Word8 -> IO (Either S2nError CInt)
+  , s2n_connection_add_new_tickets_to_send :: Ptr S2nConnection -> Word8 -> IO (Either S2nError CInt)
+  -- ^ __Session Management__
   , s2n_connection_get_tickets_sent :: Ptr S2nConnection -> Ptr Word16 -> IO (Either S2nError CInt)
   , s2n_connection_set_server_keying_material_lifetime :: Ptr S2nConnection -> Word32 -> IO (Either S2nError CInt)
   , s2n_session_ticket_get_data_len :: Ptr S2nSessionTicket -> Ptr CSize -> IO (Either S2nError CInt)
@@ -1049,8 +1049,8 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_connection_get_session_id_length :: Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_connection_get_session_id :: Ptr S2nConnection -> Ptr Word8 -> CSize -> IO (Either S2nError CInt)
   , s2n_connection_is_session_resumed :: Ptr S2nConnection -> IO (Either S2nError CInt)
-  , -- | __Certificate Information__
-    s2n_connection_is_ocsp_stapled :: Ptr S2nConnection -> IO (Either S2nError CInt)
+  , s2n_connection_is_ocsp_stapled :: Ptr S2nConnection -> IO (Either S2nError CInt)
+  -- ^ __Certificate Information__
   , s2n_connection_get_selected_signature_algorithm :: Ptr S2nConnection -> Ptr S2nTlsSignatureAlgorithm -> IO (Either S2nError CInt)
   , s2n_connection_get_selected_digest_algorithm :: Ptr S2nConnection -> Ptr S2nTlsHashAlgorithm -> IO (Either S2nError CInt)
   , s2n_connection_get_selected_client_cert_signature_algorithm :: Ptr S2nConnection -> Ptr S2nTlsSignatureAlgorithm -> IO (Either S2nError CInt)
@@ -1065,8 +1065,8 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_cert_get_x509_extension_value :: Ptr S2nCert -> Ptr Word8 -> Ptr Word8 -> Ptr Word32 -> Ptr CInt -> IO (Either S2nError CInt)
   , s2n_cert_get_utf8_string_from_extension_data_length :: Ptr Word8 -> Word32 -> Ptr Word32 -> IO (Either S2nError CInt)
   , s2n_cert_get_utf8_string_from_extension_data :: Ptr Word8 -> Word32 -> Ptr Word8 -> Ptr Word32 -> IO (Either S2nError CInt)
-  , -- | __Pre-Shared Keys (PSK)__
-    s2n_external_psk_new :: IO (Either S2nError (Ptr S2nPsk))
+  , s2n_external_psk_new :: IO (Either S2nError (Ptr S2nPsk))
+  -- ^ __Pre-Shared Keys (PSK)__
   , s2n_psk_free :: Ptr (Ptr S2nPsk) -> IO (Either S2nError CInt)
   , s2n_psk_set_identity :: Ptr S2nPsk -> Ptr Word8 -> Word16 -> IO (Either S2nError CInt)
   , s2n_psk_set_secret :: Ptr S2nPsk -> Ptr Word8 -> Word16 -> IO (Either S2nError CInt)
@@ -1085,16 +1085,16 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_psk_configure_early_data :: Ptr S2nPsk -> Word32 -> Word8 -> Word8 -> IO (Either S2nError CInt)
   , s2n_psk_set_application_protocol :: Ptr S2nPsk -> Ptr Word8 -> Word8 -> IO (Either S2nError CInt)
   , s2n_psk_set_early_data_context :: Ptr S2nPsk -> Ptr Word8 -> Word16 -> IO (Either S2nError CInt)
-  , -- | __Connection Statistics__
-    s2n_connection_get_wire_bytes_in :: Ptr S2nConnection -> IO Word64
+  , s2n_connection_get_wire_bytes_in :: Ptr S2nConnection -> IO Word64
+  -- ^ __Connection Statistics__
   , s2n_connection_get_wire_bytes_out :: Ptr S2nConnection -> IO Word64
-  , -- | __Protocol Version Information__
-    s2n_connection_get_client_protocol_version :: Ptr S2nConnection -> IO (Either S2nError CInt)
+  , s2n_connection_get_client_protocol_version :: Ptr S2nConnection -> IO (Either S2nError CInt)
+  -- ^ __Protocol Version Information__
   , s2n_connection_get_server_protocol_version :: Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_connection_get_actual_protocol_version :: Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_connection_get_client_hello_version :: Ptr S2nConnection -> IO (Either S2nError CInt)
-  , -- | __Cipher & Security Information__
-    s2n_connection_get_cipher :: Ptr S2nConnection -> IO (Either S2nError CString)
+  , s2n_connection_get_cipher :: Ptr S2nConnection -> IO (Either S2nError CString)
+  -- ^ __Cipher & Security Information__
   , s2n_connection_get_certificate_match :: Ptr S2nConnection -> Ptr S2nCertSniMatch -> IO (Either S2nError CInt)
   , s2n_connection_get_master_secret :: Ptr S2nConnection -> Ptr Word8 -> CSize -> IO (Either S2nError CInt)
   , s2n_connection_tls_exporter :: Ptr S2nConnection -> Ptr Word8 -> Word32 -> Ptr Word8 -> Word32 -> Ptr Word8 -> Word32 -> IO (Either S2nError CInt)
@@ -1107,16 +1107,16 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_connection_get_alert :: Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_connection_get_handshake_type_name :: Ptr S2nConnection -> IO (Either S2nError CString)
   , s2n_connection_get_last_message_name :: Ptr S2nConnection -> IO (Either S2nError CString)
-  , -- | __Async Private Key Operations__
-    s2n_async_pkey_op_perform :: Ptr S2nAsyncPkeyOp -> Ptr S2nCertPrivateKey -> IO (Either S2nError CInt)
+  , s2n_async_pkey_op_perform :: Ptr S2nAsyncPkeyOp -> Ptr S2nCertPrivateKey -> IO (Either S2nError CInt)
+  -- ^ __Async Private Key Operations__
   , s2n_async_pkey_op_apply :: Ptr S2nAsyncPkeyOp -> Ptr S2nConnection -> IO (Either S2nError CInt)
   , s2n_async_pkey_op_free :: Ptr S2nAsyncPkeyOp -> IO (Either S2nError CInt)
   , s2n_async_pkey_op_get_op_type :: Ptr S2nAsyncPkeyOp -> Ptr S2nAsyncPkeyOpType -> IO (Either S2nError CInt)
   , s2n_async_pkey_op_get_input_size :: Ptr S2nAsyncPkeyOp -> Ptr Word32 -> IO (Either S2nError CInt)
   , s2n_async_pkey_op_get_input :: Ptr S2nAsyncPkeyOp -> Ptr Word8 -> Word32 -> IO (Either S2nError CInt)
   , s2n_async_pkey_op_set_output :: Ptr S2nAsyncPkeyOp -> Ptr Word8 -> Word32 -> IO (Either S2nError CInt)
-  , -- | __Early Data__
-    s2n_connection_set_server_max_early_data_size :: Ptr S2nConnection -> Word32 -> IO (Either S2nError CInt)
+  , s2n_connection_set_server_max_early_data_size :: Ptr S2nConnection -> Word32 -> IO (Either S2nError CInt)
+  -- ^ __Early Data__
   , s2n_connection_set_server_early_data_context :: Ptr S2nConnection -> Ptr Word8 -> Word16 -> IO (Either S2nError CInt)
   , s2n_connection_get_early_data_status :: Ptr S2nConnection -> Ptr S2nEarlyDataStatus -> IO (Either S2nError CInt)
   , s2n_connection_get_remaining_early_data_size :: Ptr S2nConnection -> Ptr Word32 -> IO (Either S2nError CInt)
@@ -1127,8 +1127,8 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_offered_early_data_get_context :: Ptr S2nOfferedEarlyData -> Ptr Word8 -> Word16 -> IO (Either S2nError CInt)
   , s2n_offered_early_data_reject :: Ptr S2nOfferedEarlyData -> IO (Either S2nError CInt)
   , s2n_offered_early_data_accept :: Ptr S2nOfferedEarlyData -> IO (Either S2nError CInt)
-  , -- | __Connection Serialization__
-    s2n_connection_serialization_length :: Ptr S2nConnection -> Ptr Word32 -> IO (Either S2nError CInt)
+  , s2n_connection_serialization_length :: Ptr S2nConnection -> Ptr Word32 -> IO (Either S2nError CInt)
+  -- ^ __Connection Serialization__
   , s2n_connection_serialize :: Ptr S2nConnection -> Ptr Word8 -> Word32 -> IO (Either S2nError CInt)
   , s2n_connection_deserialize :: Ptr S2nConnection -> Ptr Word8 -> Word32 -> IO (Either S2nError CInt)
   }

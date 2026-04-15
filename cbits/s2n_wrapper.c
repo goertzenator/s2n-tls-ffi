@@ -150,6 +150,7 @@ void *s2n_wrap_config_new(
     const S2nErrorFuncs *err_funcs, S2nErrorInfo *err_out)
 {
     void *result = fn();
+    printf("Config new result: %p\n", result); // Debugging output
     if (result == NULL)
     {
         S2N_FILL_ERROR(err_funcs, err_out);
@@ -162,6 +163,7 @@ void *s2n_wrap_config_new_minimal(
     const S2nErrorFuncs *err_funcs, S2nErrorInfo *err_out)
 {
     void *result = fn();
+    printf("Config new minimal result: %p\n", result); // Debugging output
     if (result == NULL)
     {
         S2N_FILL_ERROR(err_funcs, err_out);
@@ -175,6 +177,7 @@ int s2n_wrap_config_free(
     const S2nErrorFuncs *err_funcs, S2nErrorInfo *err_out)
 {
     int result = fn(config);
+    printf("Config free %p result: %d\n", config, result); // Debugging output
     if (result < 0)
     {
         S2N_FILL_ERROR(err_funcs, err_out);
@@ -316,6 +319,7 @@ void *s2n_wrap_cert_chain_and_key_new(
     const S2nErrorFuncs *err_funcs, S2nErrorInfo *err_out)
 {
     void *result = fn();
+    printf("s2n_wrap_cert_chain_and_key_new: %p\n", result); // Debugging output
     if (result == NULL)
     {
         S2N_FILL_ERROR(err_funcs, err_out);
@@ -369,6 +373,7 @@ int s2n_wrap_cert_chain_and_key_free(
     const S2nErrorFuncs *err_funcs, S2nErrorInfo *err_out)
 {
     int result = fn(chain_and_key);
+    printf("s2n_wrap_cert_chain_and_key_free %p result: %d\n", chain_and_key, result); // Debugging output
     if (result < 0)
     {
         S2N_FILL_ERROR(err_funcs, err_out);
@@ -1173,6 +1178,7 @@ void *s2n_wrap_connection_new(
     const S2nErrorFuncs *err_funcs, S2nErrorInfo *err_out)
 {
     void *result = fn(mode);
+    printf("s2n_wrap_connection_new: result=%p\n", result);
     if (result == NULL)
     {
         S2N_FILL_ERROR(err_funcs, err_out);
@@ -1984,6 +1990,7 @@ int s2n_wrap_connection_free(
     const S2nErrorFuncs *err_funcs, S2nErrorInfo *err_out)
 {
     int result = fn(conn);
+    printf("s2n_wrap_connection_free %p result=%d\n", conn, result);
     if (result < 0)
     {
         S2N_FILL_ERROR(err_funcs, err_out);
@@ -1996,6 +2003,7 @@ int s2n_wrap_shutdown(
     void *conn, int *blocked,
     const S2nErrorFuncs *err_funcs, S2nErrorInfo *err_out)
 {
+    printf("s2n_wrap_shutdown: conn=%p\n", conn);
     int result = fn(conn, blocked);
     if (result < 0)
     {
