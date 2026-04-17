@@ -175,24 +175,6 @@ instance TransformError CSize where
         res <- action errInfoPtr
         pure $ Right res
 
-fmap2 :: (Functor f, Functor g) => (a -> b) -> (f (g a) -> f (g b))
-fmap2 = fmap . fmap
-
-fmap3 :: (Functor f, Functor g, Functor h) => (a -> b) -> (f (g (h a)) -> f (g (h b)))
-fmap3 = fmap . fmap . fmap
-
-fmap4 :: (Functor f, Functor g, Functor h, Functor i) => (a -> b) -> (f (g (h (i a))) -> f (g (h (i b))))
-fmap4 = fmap . fmap . fmap . fmap
-
-fmap5 :: (Functor f, Functor g, Functor h, Functor i, Functor j) => (a -> b) -> (f (g (h (i (j a)))) -> f (g (h (i (j b)))))
-fmap5 = fmap . fmap . fmap . fmap . fmap
-
-fmap6 :: (Functor f, Functor g, Functor h, Functor i, Functor j, Functor k) => (a -> b) -> (f (g (h (i (j (k a))))) -> f (g (h (i (j (k b))))))
-fmap6 = fmap . fmap . fmap . fmap . fmap . fmap
-
-fmap7 :: (Functor f, Functor g, Functor h, Functor i, Functor j, Functor k, Functor l) => (a -> b) -> (f (g (h (i (j (k (l a)))))) -> f (g (h (i (j (k (l b)))))))
-fmap7 = fmap . fmap . fmap . fmap . fmap . fmap . fmap
-
 const2 :: a -> b -> c -> a
 const2 x _ _ = x
 
@@ -311,14 +293,6 @@ loadSymbols dl errFuncsPtr = do
             pure $
                 if ptr == nullFunPtr
                     then const2 (throwMissing name)
-                    else action ptr
-
-        mkMethod3Direct :: String -> MethodRequirement -> (FunPtr x -> a -> b -> c -> IO r) -> IO (a -> b -> c -> IO r)
-        mkMethod3Direct name req action = do
-            ptr <- load name req
-            pure $
-                if ptr == nullFunPtr
-                    then const3 (throwMissing name)
                     else action ptr
 
         -- Note: C wrappers have signature: FunPtr -> args... -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO r
