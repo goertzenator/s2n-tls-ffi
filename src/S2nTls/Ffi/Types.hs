@@ -34,121 +34,121 @@ module S2nTls.Ffi.Types (
   S2nStacktrace,
 
   -- * Return Codes
-  pattern S2N_SUCCESS,
-  pattern S2N_FAILURE,
-  pattern S2N_CALLBACK_BLOCKED,
+  pattern S2nSuccess,
+  pattern S2nFailure,
+  pattern S2nCallbackBlocked,
 
   -- * TLS Versions
-  pattern S2N_MINIMUM_SUPPORTED_TLS_RECORD_MAJOR_VERSION,
-  pattern S2N_MAXIMUM_SUPPORTED_TLS_RECORD_MAJOR_VERSION,
-  pattern S2N_SSLv2,
-  pattern S2N_SSLv3,
-  pattern S2N_TLS10,
-  pattern S2N_TLS11,
-  pattern S2N_TLS12,
-  pattern S2N_TLS13,
-  pattern S2N_UNKNOWN_PROTOCOL_VERSION,
+  pattern S2nMinimumSupportedTlsRecordMajorVersion,
+  pattern S2nMaximumSupportedTlsRecordMajorVersion,
+  pattern S2nSslv2,
+  pattern S2nSslv3,
+  pattern S2nTls10,
+  pattern S2nTls11,
+  pattern S2nTls12,
+  pattern S2nTls13,
+  pattern S2nUnknownProtocolVersion,
 
   -- * Enumerations
   S2nErrorType (..),
-  pattern S2N_ERR_T_OK,
-  pattern S2N_ERR_T_IO,
-  pattern S2N_ERR_T_CLOSED,
-  pattern S2N_ERR_T_BLOCKED,
-  pattern S2N_ERR_T_ALERT,
-  pattern S2N_ERR_T_PROTO,
-  pattern S2N_ERR_T_INTERNAL,
-  pattern S2N_ERR_T_USAGE,
+  pattern S2nErrTOk,
+  pattern S2nErrTIo,
+  pattern S2nErrTClosed,
+  pattern S2nErrTBlocked,
+  pattern S2nErrTAlert,
+  pattern S2nErrTProto,
+  pattern S2nErrTInternal,
+  pattern S2nErrTUsage,
   S2nMode (..),
-  pattern S2N_SERVER,
-  pattern S2N_CLIENT,
+  pattern S2nServer,
+  pattern S2nClient,
   S2nBlinding (..),
-  pattern S2N_BUILT_IN_BLINDING,
-  pattern S2N_SELF_SERVICE_BLINDING,
+  pattern S2nBuiltInBlinding,
+  pattern S2nSelfServiceBlinding,
   S2nBlockedStatus (..),
-  pattern S2N_NOT_BLOCKED,
-  pattern S2N_BLOCKED_ON_READ,
-  pattern S2N_BLOCKED_ON_WRITE,
-  pattern S2N_BLOCKED_ON_APPLICATION_INPUT,
-  pattern S2N_BLOCKED_ON_EARLY_DATA,
+  pattern S2nNotBlocked,
+  pattern S2nBlockedOnRead,
+  pattern S2nBlockedOnWrite,
+  pattern S2nBlockedOnApplicationInput,
+  pattern S2nBlockedOnEarlyData,
   S2nCertAuthType (..),
-  pattern S2N_CERT_AUTH_NONE,
-  pattern S2N_CERT_AUTH_REQUIRED,
-  pattern S2N_CERT_AUTH_OPTIONAL,
+  pattern S2nCertAuthNone,
+  pattern S2nCertAuthRequired,
+  pattern S2nCertAuthOptional,
   S2nPskHmac (..),
-  pattern S2N_PSK_HMAC_SHA256,
-  pattern S2N_PSK_HMAC_SHA384,
+  pattern S2nPskHmacSha256,
+  pattern S2nPskHmacSha384,
   S2nPskMode (..),
-  pattern S2N_PSK_MODE_RESUMPTION,
-  pattern S2N_PSK_MODE_EXTERNAL,
+  pattern S2nPskModeResumption,
+  pattern S2nPskModeExternal,
   S2nEarlyDataStatus (..),
-  pattern S2N_EARLY_DATA_STATUS_OK,
-  pattern S2N_EARLY_DATA_STATUS_NOT_REQUESTED,
-  pattern S2N_EARLY_DATA_STATUS_REJECTED,
-  pattern S2N_EARLY_DATA_STATUS_END,
+  pattern S2nEarlyDataStatusOk,
+  pattern S2nEarlyDataStatusNotRequested,
+  pattern S2nEarlyDataStatusRejected,
+  pattern S2nEarlyDataStatusEnd,
   S2nAsyncPkeyOpType (..),
-  pattern S2N_ASYNC_DECRYPT,
-  pattern S2N_ASYNC_SIGN,
+  pattern S2nAsyncDecrypt,
+  pattern S2nAsyncSign,
   S2nAsyncPkeyValidationMode (..),
-  pattern S2N_ASYNC_PKEY_VALIDATION_FAST,
-  pattern S2N_ASYNC_PKEY_VALIDATION_STRICT,
+  pattern S2nAsyncPkeyValidationFast,
+  pattern S2nAsyncPkeyValidationStrict,
   S2nSerializationVersion (..),
-  pattern S2N_SERIALIZED_CONN_NONE,
-  pattern S2N_SERIALIZED_CONN_V1,
+  pattern S2nSerializedConnNone,
+  pattern S2nSerializedConnV1,
   S2nTlsExtensionType (..),
-  pattern S2N_EXTENSION_SERVER_NAME,
-  pattern S2N_EXTENSION_MAX_FRAG_LEN,
-  pattern S2N_EXTENSION_OCSP_STAPLING,
-  pattern S2N_EXTENSION_SUPPORTED_GROUPS,
-  pattern S2N_EXTENSION_EC_POINT_FORMATS,
-  pattern S2N_EXTENSION_SIGNATURE_ALGORITHMS,
-  pattern S2N_EXTENSION_ALPN,
-  pattern S2N_EXTENSION_CERTIFICATE_TRANSPARENCY,
-  pattern S2N_EXTENSION_RENEGOTIATION_INFO,
+  pattern S2nExtensionServerName,
+  pattern S2nExtensionMaxFragLen,
+  pattern S2nExtensionOcspStapling,
+  pattern S2nExtensionSupportedGroups,
+  pattern S2nExtensionEcPointFormats,
+  pattern S2nExtensionSignatureAlgorithms,
+  pattern S2nExtensionAlpn,
+  pattern S2nExtensionCertificateTransparency,
+  pattern S2nExtensionRenegotiationInfo,
   S2nMaxFragLen (..),
-  pattern S2N_TLS_MAX_FRAG_LEN_512,
-  pattern S2N_TLS_MAX_FRAG_LEN_1024,
-  pattern S2N_TLS_MAX_FRAG_LEN_2048,
-  pattern S2N_TLS_MAX_FRAG_LEN_4096,
+  pattern S2nTlsMaxFragLen512,
+  pattern S2nTlsMaxFragLen1024,
+  pattern S2nTlsMaxFragLen2048,
+  pattern S2nTlsMaxFragLen4096,
   S2nFipsMode (..),
-  pattern S2N_FIPS_MODE_DISABLED,
-  pattern S2N_FIPS_MODE_ENABLED,
+  pattern S2nFipsModeDisabled,
+  pattern S2nFipsModeEnabled,
   S2nStatusRequestType (..),
-  pattern S2N_STATUS_REQUEST_NONE,
-  pattern S2N_STATUS_REQUEST_OCSP,
+  pattern S2nStatusRequestNone,
+  pattern S2nStatusRequestOcsp,
   S2nCtSupportLevel (..),
-  pattern S2N_CT_SUPPORT_NONE,
-  pattern S2N_CT_SUPPORT_REQUEST,
+  pattern S2nCtSupportNone,
+  pattern S2nCtSupportRequest,
   S2nAlertBehavior (..),
-  pattern S2N_ALERT_FAIL_ON_WARNINGS,
-  pattern S2N_ALERT_IGNORE_WARNINGS,
+  pattern S2nAlertFailOnWarnings,
+  pattern S2nAlertIgnoreWarnings,
   S2nClientHelloCbMode (..),
-  pattern S2N_CLIENT_HELLO_CB_BLOCKING,
-  pattern S2N_CLIENT_HELLO_CB_NONBLOCKING,
+  pattern S2nClientHelloCbBlocking,
+  pattern S2nClientHelloCbNonblocking,
   S2nTlsSignatureAlgorithm (..),
-  pattern S2N_TLS_SIGNATURE_ANONYMOUS,
-  pattern S2N_TLS_SIGNATURE_RSA,
-  pattern S2N_TLS_SIGNATURE_ECDSA,
-  pattern S2N_TLS_SIGNATURE_RSA_PSS_RSAE,
-  pattern S2N_TLS_SIGNATURE_RSA_PSS_PSS,
+  pattern S2nTlsSignatureAnonymous,
+  pattern S2nTlsSignatureRsa,
+  pattern S2nTlsSignatureEcdsa,
+  pattern S2nTlsSignatureRsaPssRsae,
+  pattern S2nTlsSignatureRsaPssPss,
   S2nTlsHashAlgorithm (..),
-  pattern S2N_TLS_HASH_NONE,
-  pattern S2N_TLS_HASH_MD5,
-  pattern S2N_TLS_HASH_SHA1,
-  pattern S2N_TLS_HASH_SHA224,
-  pattern S2N_TLS_HASH_SHA256,
-  pattern S2N_TLS_HASH_SHA384,
-  pattern S2N_TLS_HASH_SHA512,
+  pattern S2nTlsHashNone,
+  pattern S2nTlsHashMd5,
+  pattern S2nTlsHashSha1,
+  pattern S2nTlsHashSha224,
+  pattern S2nTlsHashSha256,
+  pattern S2nTlsHashSha384,
+  pattern S2nTlsHashSha512,
   S2nCertSniMatch (..),
-  pattern S2N_CERT_SNI_MATCH_NOT_APPLICABLE,
-  pattern S2N_CERT_SNI_MATCH,
-  pattern S2N_CERT_SNI_NO_MATCH_FOUND,
+  pattern S2nCertSniMatchNotApplicable,
+  pattern S2nCertSniMatched,
+  pattern S2nCertSniNoMatchFound,
   S2nPeerKeyUpdate (..),
-  pattern S2N_KEY_UPDATE_NOT_REQUESTED,
-  pattern S2N_KEY_UPDATE_REQUESTED,
+  pattern S2nKeyUpdateNotRequested,
+  pattern S2nKeyUpdateRequested,
   S2nVerifyAfterSign (..),
-  pattern S2N_VERIFY_AFTER_SIGN_DISABLED,
-  pattern S2N_VERIFY_AFTER_SIGN_ENABLED,
+  pattern S2nVerifyAfterSignDisabled,
+  pattern S2nVerifyAfterSignEnabled,
 
   -- * Callback Types
   S2nClockTimeNanoseconds,
@@ -310,56 +310,56 @@ data S2nStacktrace
 --------------------------------------------------------------------------------
 
 -- | Function completed successfully.
-pattern S2N_SUCCESS :: CInt
-pattern S2N_SUCCESS = 0
+pattern S2nSuccess :: CInt
+pattern S2nSuccess = 0
 
 -- | Function encountered an error.
-pattern S2N_FAILURE :: CInt
-pattern S2N_FAILURE = -1
+pattern S2nFailure :: CInt
+pattern S2nFailure = -1
 
 -- | Callback was blocked and needs to be retried.
-pattern S2N_CALLBACK_BLOCKED :: CInt
-pattern S2N_CALLBACK_BLOCKED = -2
+pattern S2nCallbackBlocked :: CInt
+pattern S2nCallbackBlocked = -2
 
 --------------------------------------------------------------------------------
 -- TLS Versions
 --------------------------------------------------------------------------------
 
 -- | Minimum supported TLS record major version.
-pattern S2N_MINIMUM_SUPPORTED_TLS_RECORD_MAJOR_VERSION :: Word8
-pattern S2N_MINIMUM_SUPPORTED_TLS_RECORD_MAJOR_VERSION = 2
+pattern S2nMinimumSupportedTlsRecordMajorVersion :: Word8
+pattern S2nMinimumSupportedTlsRecordMajorVersion = 2
 
 -- | Maximum supported TLS record major version.
-pattern S2N_MAXIMUM_SUPPORTED_TLS_RECORD_MAJOR_VERSION :: Word8
-pattern S2N_MAXIMUM_SUPPORTED_TLS_RECORD_MAJOR_VERSION = 3
+pattern S2nMaximumSupportedTlsRecordMajorVersion :: Word8
+pattern S2nMaximumSupportedTlsRecordMajorVersion = 3
 
 -- | SSL version 2 (deprecated, insecure).
-pattern S2N_SSLv2 :: CInt
-pattern S2N_SSLv2 = 20
+pattern S2nSslv2 :: CInt
+pattern S2nSslv2 = 20
 
 -- | SSL version 3 (deprecated, insecure).
-pattern S2N_SSLv3 :: CInt
-pattern S2N_SSLv3 = 30
+pattern S2nSslv3 :: CInt
+pattern S2nSslv3 = 30
 
 -- | TLS version 1.0.
-pattern S2N_TLS10 :: CInt
-pattern S2N_TLS10 = 31
+pattern S2nTls10 :: CInt
+pattern S2nTls10 = 31
 
 -- | TLS version 1.1.
-pattern S2N_TLS11 :: CInt
-pattern S2N_TLS11 = 32
+pattern S2nTls11 :: CInt
+pattern S2nTls11 = 32
 
 -- | TLS version 1.2.
-pattern S2N_TLS12 :: CInt
-pattern S2N_TLS12 = 33
+pattern S2nTls12 :: CInt
+pattern S2nTls12 = 33
 
 -- | TLS version 1.3.
-pattern S2N_TLS13 :: CInt
-pattern S2N_TLS13 = 34
+pattern S2nTls13 :: CInt
+pattern S2nTls13 = 34
 
 -- | Unknown or unrecognized protocol version.
-pattern S2N_UNKNOWN_PROTOCOL_VERSION :: CInt
-pattern S2N_UNKNOWN_PROTOCOL_VERSION = 0
+pattern S2nUnknownProtocolVersion :: CInt
+pattern S2nUnknownProtocolVersion = 0
 
 --------------------------------------------------------------------------------
 -- Enumerations
@@ -370,396 +370,396 @@ newtype S2nErrorType = S2nErrorType CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | No error occurred.
-pattern S2N_ERR_T_OK :: S2nErrorType
-pattern S2N_ERR_T_OK = S2nErrorType 0
+pattern S2nErrTOk :: S2nErrorType
+pattern S2nErrTOk = S2nErrorType 0
 
 -- | I\/O error (check errno).
-pattern S2N_ERR_T_IO :: S2nErrorType
-pattern S2N_ERR_T_IO = S2nErrorType 1
+pattern S2nErrTIo :: S2nErrorType
+pattern S2nErrTIo = S2nErrorType 1
 
 -- | Connection was closed.
-pattern S2N_ERR_T_CLOSED :: S2nErrorType
-pattern S2N_ERR_T_CLOSED = S2nErrorType 2
+pattern S2nErrTClosed :: S2nErrorType
+pattern S2nErrTClosed = S2nErrorType 2
 
 -- | Operation blocked (retry needed).
-pattern S2N_ERR_T_BLOCKED :: S2nErrorType
-pattern S2N_ERR_T_BLOCKED = S2nErrorType 3
+pattern S2nErrTBlocked :: S2nErrorType
+pattern S2nErrTBlocked = S2nErrorType 3
 
 -- | TLS alert received.
-pattern S2N_ERR_T_ALERT :: S2nErrorType
-pattern S2N_ERR_T_ALERT = S2nErrorType 4
+pattern S2nErrTAlert :: S2nErrorType
+pattern S2nErrTAlert = S2nErrorType 4
 
 -- | Protocol error.
-pattern S2N_ERR_T_PROTO :: S2nErrorType
-pattern S2N_ERR_T_PROTO = S2nErrorType 5
+pattern S2nErrTProto :: S2nErrorType
+pattern S2nErrTProto = S2nErrorType 5
 
 -- | Internal library error.
-pattern S2N_ERR_T_INTERNAL :: S2nErrorType
-pattern S2N_ERR_T_INTERNAL = S2nErrorType 6
+pattern S2nErrTInternal :: S2nErrorType
+pattern S2nErrTInternal = S2nErrorType 6
 
 -- | Incorrect API usage.
-pattern S2N_ERR_T_USAGE :: S2nErrorType
-pattern S2N_ERR_T_USAGE = S2nErrorType 7
+pattern S2nErrTUsage :: S2nErrorType
+pattern S2nErrTUsage = S2nErrorType 7
 
 -- | TLS connection mode (server or client).
 newtype S2nMode = S2nMode CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | Server mode.
-pattern S2N_SERVER :: S2nMode
-pattern S2N_SERVER = S2nMode 0
+pattern S2nServer :: S2nMode
+pattern S2nServer = S2nMode 0
 
 -- | Client mode.
-pattern S2N_CLIENT :: S2nMode
-pattern S2N_CLIENT = S2nMode 1
+pattern S2nClient :: S2nMode
+pattern S2nClient = S2nMode 1
 
 -- | Blinding mode for timing attack mitigation.
 newtype S2nBlinding = S2nBlinding CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | s2n handles blinding automatically.
-pattern S2N_BUILT_IN_BLINDING :: S2nBlinding
-pattern S2N_BUILT_IN_BLINDING = S2nBlinding 0
+pattern S2nBuiltInBlinding :: S2nBlinding
+pattern S2nBuiltInBlinding = S2nBlinding 0
 
 -- | Application handles blinding delays.
-pattern S2N_SELF_SERVICE_BLINDING :: S2nBlinding
-pattern S2N_SELF_SERVICE_BLINDING = S2nBlinding 1
+pattern S2nSelfServiceBlinding :: S2nBlinding
+pattern S2nSelfServiceBlinding = S2nBlinding 1
 
 -- | Status indicating why an operation was blocked.
 newtype S2nBlockedStatus = S2nBlockedStatus CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | Operation completed successfully.
-pattern S2N_NOT_BLOCKED :: S2nBlockedStatus
-pattern S2N_NOT_BLOCKED = S2nBlockedStatus 0
+pattern S2nNotBlocked :: S2nBlockedStatus
+pattern S2nNotBlocked = S2nBlockedStatus 0
 
 -- | Blocked waiting for data to read.
-pattern S2N_BLOCKED_ON_READ :: S2nBlockedStatus
-pattern S2N_BLOCKED_ON_READ = S2nBlockedStatus 1
+pattern S2nBlockedOnRead :: S2nBlockedStatus
+pattern S2nBlockedOnRead = S2nBlockedStatus 1
 
 -- | Blocked waiting to write data.
-pattern S2N_BLOCKED_ON_WRITE :: S2nBlockedStatus
-pattern S2N_BLOCKED_ON_WRITE = S2nBlockedStatus 2
+pattern S2nBlockedOnWrite :: S2nBlockedStatus
+pattern S2nBlockedOnWrite = S2nBlockedStatus 2
 
 -- | Blocked waiting for application input.
-pattern S2N_BLOCKED_ON_APPLICATION_INPUT :: S2nBlockedStatus
-pattern S2N_BLOCKED_ON_APPLICATION_INPUT = S2nBlockedStatus 3
+pattern S2nBlockedOnApplicationInput :: S2nBlockedStatus
+pattern S2nBlockedOnApplicationInput = S2nBlockedStatus 3
 
 -- | Blocked on early data processing.
-pattern S2N_BLOCKED_ON_EARLY_DATA :: S2nBlockedStatus
-pattern S2N_BLOCKED_ON_EARLY_DATA = S2nBlockedStatus 4
+pattern S2nBlockedOnEarlyData :: S2nBlockedStatus
+pattern S2nBlockedOnEarlyData = S2nBlockedStatus 4
 
 -- | Client certificate authentication mode.
 newtype S2nCertAuthType = S2nCertAuthType CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | No client authentication.
-pattern S2N_CERT_AUTH_NONE :: S2nCertAuthType
-pattern S2N_CERT_AUTH_NONE = S2nCertAuthType 0
+pattern S2nCertAuthNone :: S2nCertAuthType
+pattern S2nCertAuthNone = S2nCertAuthType 0
 
 -- | Client certificate required.
-pattern S2N_CERT_AUTH_REQUIRED :: S2nCertAuthType
-pattern S2N_CERT_AUTH_REQUIRED = S2nCertAuthType 1
+pattern S2nCertAuthRequired :: S2nCertAuthType
+pattern S2nCertAuthRequired = S2nCertAuthType 1
 
 -- | Client certificate optional.
-pattern S2N_CERT_AUTH_OPTIONAL :: S2nCertAuthType
-pattern S2N_CERT_AUTH_OPTIONAL = S2nCertAuthType 2
+pattern S2nCertAuthOptional :: S2nCertAuthType
+pattern S2nCertAuthOptional = S2nCertAuthType 2
 
 -- | HMAC algorithm for pre-shared keys.
 newtype S2nPskHmac = S2nPskHmac CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | HMAC-SHA256 for PSK.
-pattern S2N_PSK_HMAC_SHA256 :: S2nPskHmac
-pattern S2N_PSK_HMAC_SHA256 = S2nPskHmac 0
+pattern S2nPskHmacSha256 :: S2nPskHmac
+pattern S2nPskHmacSha256 = S2nPskHmac 0
 
 -- | HMAC-SHA384 for PSK.
-pattern S2N_PSK_HMAC_SHA384 :: S2nPskHmac
-pattern S2N_PSK_HMAC_SHA384 = S2nPskHmac 1
+pattern S2nPskHmacSha384 :: S2nPskHmac
+pattern S2nPskHmacSha384 = S2nPskHmac 1
 
 -- | Pre-shared key mode.
 newtype S2nPskMode = S2nPskMode CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | PSK for session resumption.
-pattern S2N_PSK_MODE_RESUMPTION :: S2nPskMode
-pattern S2N_PSK_MODE_RESUMPTION = S2nPskMode 0
+pattern S2nPskModeResumption :: S2nPskMode
+pattern S2nPskModeResumption = S2nPskMode 0
 
 -- | External\/out-of-band PSK.
-pattern S2N_PSK_MODE_EXTERNAL :: S2nPskMode
-pattern S2N_PSK_MODE_EXTERNAL = S2nPskMode 1
+pattern S2nPskModeExternal :: S2nPskMode
+pattern S2nPskModeExternal = S2nPskMode 1
 
 -- | Status of TLS 1.3 early data (0-RTT).
 newtype S2nEarlyDataStatus = S2nEarlyDataStatus CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | Early data accepted.
-pattern S2N_EARLY_DATA_STATUS_OK :: S2nEarlyDataStatus
-pattern S2N_EARLY_DATA_STATUS_OK = S2nEarlyDataStatus 0
+pattern S2nEarlyDataStatusOk :: S2nEarlyDataStatus
+pattern S2nEarlyDataStatusOk = S2nEarlyDataStatus 0
 
 -- | Early data not requested.
-pattern S2N_EARLY_DATA_STATUS_NOT_REQUESTED :: S2nEarlyDataStatus
-pattern S2N_EARLY_DATA_STATUS_NOT_REQUESTED = S2nEarlyDataStatus 1
+pattern S2nEarlyDataStatusNotRequested :: S2nEarlyDataStatus
+pattern S2nEarlyDataStatusNotRequested = S2nEarlyDataStatus 1
 
 -- | Early data rejected.
-pattern S2N_EARLY_DATA_STATUS_REJECTED :: S2nEarlyDataStatus
-pattern S2N_EARLY_DATA_STATUS_REJECTED = S2nEarlyDataStatus 2
+pattern S2nEarlyDataStatusRejected :: S2nEarlyDataStatus
+pattern S2nEarlyDataStatusRejected = S2nEarlyDataStatus 2
 
 -- | Early data processing complete.
-pattern S2N_EARLY_DATA_STATUS_END :: S2nEarlyDataStatus
-pattern S2N_EARLY_DATA_STATUS_END = S2nEarlyDataStatus 3
+pattern S2nEarlyDataStatusEnd :: S2nEarlyDataStatus
+pattern S2nEarlyDataStatusEnd = S2nEarlyDataStatus 3
 
 -- | Type of async private key operation.
 newtype S2nAsyncPkeyOpType = S2nAsyncPkeyOpType CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | Decryption operation.
-pattern S2N_ASYNC_DECRYPT :: S2nAsyncPkeyOpType
-pattern S2N_ASYNC_DECRYPT = S2nAsyncPkeyOpType 0
+pattern S2nAsyncDecrypt :: S2nAsyncPkeyOpType
+pattern S2nAsyncDecrypt = S2nAsyncPkeyOpType 0
 
 -- | Signing operation.
-pattern S2N_ASYNC_SIGN :: S2nAsyncPkeyOpType
-pattern S2N_ASYNC_SIGN = S2nAsyncPkeyOpType 1
+pattern S2nAsyncSign :: S2nAsyncPkeyOpType
+pattern S2nAsyncSign = S2nAsyncPkeyOpType 1
 
 -- | Validation mode for async private key operations.
 newtype S2nAsyncPkeyValidationMode = S2nAsyncPkeyValidationMode CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | Fast validation (less strict).
-pattern S2N_ASYNC_PKEY_VALIDATION_FAST :: S2nAsyncPkeyValidationMode
-pattern S2N_ASYNC_PKEY_VALIDATION_FAST = S2nAsyncPkeyValidationMode 0
+pattern S2nAsyncPkeyValidationFast :: S2nAsyncPkeyValidationMode
+pattern S2nAsyncPkeyValidationFast = S2nAsyncPkeyValidationMode 0
 
 -- | Strict validation.
-pattern S2N_ASYNC_PKEY_VALIDATION_STRICT :: S2nAsyncPkeyValidationMode
-pattern S2N_ASYNC_PKEY_VALIDATION_STRICT = S2nAsyncPkeyValidationMode 1
+pattern S2nAsyncPkeyValidationStrict :: S2nAsyncPkeyValidationMode
+pattern S2nAsyncPkeyValidationStrict = S2nAsyncPkeyValidationMode 1
 
 -- | Connection serialization format version.
 newtype S2nSerializationVersion = S2nSerializationVersion CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | No serialization.
-pattern S2N_SERIALIZED_CONN_NONE :: S2nSerializationVersion
-pattern S2N_SERIALIZED_CONN_NONE = S2nSerializationVersion 0
+pattern S2nSerializedConnNone :: S2nSerializationVersion
+pattern S2nSerializedConnNone = S2nSerializationVersion 0
 
 -- | Serialization format version 1.
-pattern S2N_SERIALIZED_CONN_V1 :: S2nSerializationVersion
-pattern S2N_SERIALIZED_CONN_V1 = S2nSerializationVersion 1
+pattern S2nSerializedConnV1 :: S2nSerializationVersion
+pattern S2nSerializedConnV1 = S2nSerializationVersion 1
 
 -- | TLS extension type identifier.
 newtype S2nTlsExtensionType = S2nTlsExtensionType CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | Server Name Indication (SNI) extension.
-pattern S2N_EXTENSION_SERVER_NAME :: S2nTlsExtensionType
-pattern S2N_EXTENSION_SERVER_NAME = S2nTlsExtensionType 0
+pattern S2nExtensionServerName :: S2nTlsExtensionType
+pattern S2nExtensionServerName = S2nTlsExtensionType 0
 
 -- | Maximum fragment length extension.
-pattern S2N_EXTENSION_MAX_FRAG_LEN :: S2nTlsExtensionType
-pattern S2N_EXTENSION_MAX_FRAG_LEN = S2nTlsExtensionType 1
+pattern S2nExtensionMaxFragLen :: S2nTlsExtensionType
+pattern S2nExtensionMaxFragLen = S2nTlsExtensionType 1
 
 -- | OCSP stapling extension.
-pattern S2N_EXTENSION_OCSP_STAPLING :: S2nTlsExtensionType
-pattern S2N_EXTENSION_OCSP_STAPLING = S2nTlsExtensionType 5
+pattern S2nExtensionOcspStapling :: S2nTlsExtensionType
+pattern S2nExtensionOcspStapling = S2nTlsExtensionType 5
 
 -- | Supported groups (elliptic curves) extension.
-pattern S2N_EXTENSION_SUPPORTED_GROUPS :: S2nTlsExtensionType
-pattern S2N_EXTENSION_SUPPORTED_GROUPS = S2nTlsExtensionType 10
+pattern S2nExtensionSupportedGroups :: S2nTlsExtensionType
+pattern S2nExtensionSupportedGroups = S2nTlsExtensionType 10
 
 -- | EC point formats extension.
-pattern S2N_EXTENSION_EC_POINT_FORMATS :: S2nTlsExtensionType
-pattern S2N_EXTENSION_EC_POINT_FORMATS = S2nTlsExtensionType 11
+pattern S2nExtensionEcPointFormats :: S2nTlsExtensionType
+pattern S2nExtensionEcPointFormats = S2nTlsExtensionType 11
 
 -- | Signature algorithms extension.
-pattern S2N_EXTENSION_SIGNATURE_ALGORITHMS :: S2nTlsExtensionType
-pattern S2N_EXTENSION_SIGNATURE_ALGORITHMS = S2nTlsExtensionType 13
+pattern S2nExtensionSignatureAlgorithms :: S2nTlsExtensionType
+pattern S2nExtensionSignatureAlgorithms = S2nTlsExtensionType 13
 
 -- | Application-Layer Protocol Negotiation (ALPN) extension.
-pattern S2N_EXTENSION_ALPN :: S2nTlsExtensionType
-pattern S2N_EXTENSION_ALPN = S2nTlsExtensionType 16
+pattern S2nExtensionAlpn :: S2nTlsExtensionType
+pattern S2nExtensionAlpn = S2nTlsExtensionType 16
 
 -- | Certificate Transparency extension.
-pattern S2N_EXTENSION_CERTIFICATE_TRANSPARENCY :: S2nTlsExtensionType
-pattern S2N_EXTENSION_CERTIFICATE_TRANSPARENCY = S2nTlsExtensionType 18
+pattern S2nExtensionCertificateTransparency :: S2nTlsExtensionType
+pattern S2nExtensionCertificateTransparency = S2nTlsExtensionType 18
 
 -- | Renegotiation info extension.
-pattern S2N_EXTENSION_RENEGOTIATION_INFO :: S2nTlsExtensionType
-pattern S2N_EXTENSION_RENEGOTIATION_INFO = S2nTlsExtensionType 65281
+pattern S2nExtensionRenegotiationInfo :: S2nTlsExtensionType
+pattern S2nExtensionRenegotiationInfo = S2nTlsExtensionType 65281
 
 -- | Maximum TLS fragment length.
 newtype S2nMaxFragLen = S2nMaxFragLen CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | Maximum fragment length of 512 bytes.
-pattern S2N_TLS_MAX_FRAG_LEN_512 :: S2nMaxFragLen
-pattern S2N_TLS_MAX_FRAG_LEN_512 = S2nMaxFragLen 1
+pattern S2nTlsMaxFragLen512 :: S2nMaxFragLen
+pattern S2nTlsMaxFragLen512 = S2nMaxFragLen 1
 
 -- | Maximum fragment length of 1024 bytes.
-pattern S2N_TLS_MAX_FRAG_LEN_1024 :: S2nMaxFragLen
-pattern S2N_TLS_MAX_FRAG_LEN_1024 = S2nMaxFragLen 2
+pattern S2nTlsMaxFragLen1024 :: S2nMaxFragLen
+pattern S2nTlsMaxFragLen1024 = S2nMaxFragLen 2
 
 -- | Maximum fragment length of 2048 bytes.
-pattern S2N_TLS_MAX_FRAG_LEN_2048 :: S2nMaxFragLen
-pattern S2N_TLS_MAX_FRAG_LEN_2048 = S2nMaxFragLen 3
+pattern S2nTlsMaxFragLen2048 :: S2nMaxFragLen
+pattern S2nTlsMaxFragLen2048 = S2nMaxFragLen 3
 
 -- | Maximum fragment length of 4096 bytes.
-pattern S2N_TLS_MAX_FRAG_LEN_4096 :: S2nMaxFragLen
-pattern S2N_TLS_MAX_FRAG_LEN_4096 = S2nMaxFragLen 4
+pattern S2nTlsMaxFragLen4096 :: S2nMaxFragLen
+pattern S2nTlsMaxFragLen4096 = S2nMaxFragLen 4
 
 -- | FIPS mode status.
 newtype S2nFipsMode = S2nFipsMode CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | FIPS mode disabled.
-pattern S2N_FIPS_MODE_DISABLED :: S2nFipsMode
-pattern S2N_FIPS_MODE_DISABLED = S2nFipsMode 0
+pattern S2nFipsModeDisabled :: S2nFipsMode
+pattern S2nFipsModeDisabled = S2nFipsMode 0
 
 -- | FIPS mode enabled.
-pattern S2N_FIPS_MODE_ENABLED :: S2nFipsMode
-pattern S2N_FIPS_MODE_ENABLED = S2nFipsMode 1
+pattern S2nFipsModeEnabled :: S2nFipsMode
+pattern S2nFipsModeEnabled = S2nFipsMode 1
 
 -- | OCSP status request type.
 newtype S2nStatusRequestType = S2nStatusRequestType CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | No status request.
-pattern S2N_STATUS_REQUEST_NONE :: S2nStatusRequestType
-pattern S2N_STATUS_REQUEST_NONE = S2nStatusRequestType 0
+pattern S2nStatusRequestNone :: S2nStatusRequestType
+pattern S2nStatusRequestNone = S2nStatusRequestType 0
 
 -- | Request OCSP status.
-pattern S2N_STATUS_REQUEST_OCSP :: S2nStatusRequestType
-pattern S2N_STATUS_REQUEST_OCSP = S2nStatusRequestType 1
+pattern S2nStatusRequestOcsp :: S2nStatusRequestType
+pattern S2nStatusRequestOcsp = S2nStatusRequestType 1
 
 -- | Certificate Transparency support level.
 newtype S2nCtSupportLevel = S2nCtSupportLevel CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | No Certificate Transparency support.
-pattern S2N_CT_SUPPORT_NONE :: S2nCtSupportLevel
-pattern S2N_CT_SUPPORT_NONE = S2nCtSupportLevel 0
+pattern S2nCtSupportNone :: S2nCtSupportLevel
+pattern S2nCtSupportNone = S2nCtSupportLevel 0
 
 -- | Request Certificate Transparency.
-pattern S2N_CT_SUPPORT_REQUEST :: S2nCtSupportLevel
-pattern S2N_CT_SUPPORT_REQUEST = S2nCtSupportLevel 1
+pattern S2nCtSupportRequest :: S2nCtSupportLevel
+pattern S2nCtSupportRequest = S2nCtSupportLevel 1
 
 -- | TLS alert behavior on warnings.
 newtype S2nAlertBehavior = S2nAlertBehavior CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | Fail on warning alerts.
-pattern S2N_ALERT_FAIL_ON_WARNINGS :: S2nAlertBehavior
-pattern S2N_ALERT_FAIL_ON_WARNINGS = S2nAlertBehavior 0
+pattern S2nAlertFailOnWarnings :: S2nAlertBehavior
+pattern S2nAlertFailOnWarnings = S2nAlertBehavior 0
 
 -- | Ignore warning alerts.
-pattern S2N_ALERT_IGNORE_WARNINGS :: S2nAlertBehavior
-pattern S2N_ALERT_IGNORE_WARNINGS = S2nAlertBehavior 1
+pattern S2nAlertIgnoreWarnings :: S2nAlertBehavior
+pattern S2nAlertIgnoreWarnings = S2nAlertBehavior 1
 
 -- | Client hello callback mode.
 newtype S2nClientHelloCbMode = S2nClientHelloCbMode CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | Blocking callback mode.
-pattern S2N_CLIENT_HELLO_CB_BLOCKING :: S2nClientHelloCbMode
-pattern S2N_CLIENT_HELLO_CB_BLOCKING = S2nClientHelloCbMode 0
+pattern S2nClientHelloCbBlocking :: S2nClientHelloCbMode
+pattern S2nClientHelloCbBlocking = S2nClientHelloCbMode 0
 
 -- | Non-blocking callback mode.
-pattern S2N_CLIENT_HELLO_CB_NONBLOCKING :: S2nClientHelloCbMode
-pattern S2N_CLIENT_HELLO_CB_NONBLOCKING = S2nClientHelloCbMode 1
+pattern S2nClientHelloCbNonblocking :: S2nClientHelloCbMode
+pattern S2nClientHelloCbNonblocking = S2nClientHelloCbMode 1
 
 -- | TLS signature algorithm.
 newtype S2nTlsSignatureAlgorithm = S2nTlsSignatureAlgorithm CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | Anonymous (no signature).
-pattern S2N_TLS_SIGNATURE_ANONYMOUS :: S2nTlsSignatureAlgorithm
-pattern S2N_TLS_SIGNATURE_ANONYMOUS = S2nTlsSignatureAlgorithm 0
+pattern S2nTlsSignatureAnonymous :: S2nTlsSignatureAlgorithm
+pattern S2nTlsSignatureAnonymous = S2nTlsSignatureAlgorithm 0
 
 -- | RSA signature.
-pattern S2N_TLS_SIGNATURE_RSA :: S2nTlsSignatureAlgorithm
-pattern S2N_TLS_SIGNATURE_RSA = S2nTlsSignatureAlgorithm 1
+pattern S2nTlsSignatureRsa :: S2nTlsSignatureAlgorithm
+pattern S2nTlsSignatureRsa = S2nTlsSignatureAlgorithm 1
 
 -- | ECDSA signature.
-pattern S2N_TLS_SIGNATURE_ECDSA :: S2nTlsSignatureAlgorithm
-pattern S2N_TLS_SIGNATURE_ECDSA = S2nTlsSignatureAlgorithm 3
+pattern S2nTlsSignatureEcdsa :: S2nTlsSignatureAlgorithm
+pattern S2nTlsSignatureEcdsa = S2nTlsSignatureAlgorithm 3
 
 -- | RSA-PSS with RSAE key.
-pattern S2N_TLS_SIGNATURE_RSA_PSS_RSAE :: S2nTlsSignatureAlgorithm
-pattern S2N_TLS_SIGNATURE_RSA_PSS_RSAE = S2nTlsSignatureAlgorithm 4
+pattern S2nTlsSignatureRsaPssRsae :: S2nTlsSignatureAlgorithm
+pattern S2nTlsSignatureRsaPssRsae = S2nTlsSignatureAlgorithm 4
 
 -- | RSA-PSS with PSS key.
-pattern S2N_TLS_SIGNATURE_RSA_PSS_PSS :: S2nTlsSignatureAlgorithm
-pattern S2N_TLS_SIGNATURE_RSA_PSS_PSS = S2nTlsSignatureAlgorithm 5
+pattern S2nTlsSignatureRsaPssPss :: S2nTlsSignatureAlgorithm
+pattern S2nTlsSignatureRsaPssPss = S2nTlsSignatureAlgorithm 5
 
 -- | TLS hash algorithm.
 newtype S2nTlsHashAlgorithm = S2nTlsHashAlgorithm CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | No hash algorithm.
-pattern S2N_TLS_HASH_NONE :: S2nTlsHashAlgorithm
-pattern S2N_TLS_HASH_NONE = S2nTlsHashAlgorithm 0
+pattern S2nTlsHashNone :: S2nTlsHashAlgorithm
+pattern S2nTlsHashNone = S2nTlsHashAlgorithm 0
 
 -- | MD5 hash (deprecated).
-pattern S2N_TLS_HASH_MD5 :: S2nTlsHashAlgorithm
-pattern S2N_TLS_HASH_MD5 = S2nTlsHashAlgorithm 1
+pattern S2nTlsHashMd5 :: S2nTlsHashAlgorithm
+pattern S2nTlsHashMd5 = S2nTlsHashAlgorithm 1
 
 -- | SHA-1 hash (deprecated).
-pattern S2N_TLS_HASH_SHA1 :: S2nTlsHashAlgorithm
-pattern S2N_TLS_HASH_SHA1 = S2nTlsHashAlgorithm 2
+pattern S2nTlsHashSha1 :: S2nTlsHashAlgorithm
+pattern S2nTlsHashSha1 = S2nTlsHashAlgorithm 2
 
 -- | SHA-224 hash.
-pattern S2N_TLS_HASH_SHA224 :: S2nTlsHashAlgorithm
-pattern S2N_TLS_HASH_SHA224 = S2nTlsHashAlgorithm 3
+pattern S2nTlsHashSha224 :: S2nTlsHashAlgorithm
+pattern S2nTlsHashSha224 = S2nTlsHashAlgorithm 3
 
 -- | SHA-256 hash.
-pattern S2N_TLS_HASH_SHA256 :: S2nTlsHashAlgorithm
-pattern S2N_TLS_HASH_SHA256 = S2nTlsHashAlgorithm 4
+pattern S2nTlsHashSha256 :: S2nTlsHashAlgorithm
+pattern S2nTlsHashSha256 = S2nTlsHashAlgorithm 4
 
 -- | SHA-384 hash.
-pattern S2N_TLS_HASH_SHA384 :: S2nTlsHashAlgorithm
-pattern S2N_TLS_HASH_SHA384 = S2nTlsHashAlgorithm 5
+pattern S2nTlsHashSha384 :: S2nTlsHashAlgorithm
+pattern S2nTlsHashSha384 = S2nTlsHashAlgorithm 5
 
 -- | SHA-512 hash.
-pattern S2N_TLS_HASH_SHA512 :: S2nTlsHashAlgorithm
-pattern S2N_TLS_HASH_SHA512 = S2nTlsHashAlgorithm 6
+pattern S2nTlsHashSha512 :: S2nTlsHashAlgorithm
+pattern S2nTlsHashSha512 = S2nTlsHashAlgorithm 6
 
 -- | Certificate SNI match result.
 newtype S2nCertSniMatch = S2nCertSniMatch CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | SNI matching not applicable.
-pattern S2N_CERT_SNI_MATCH_NOT_APPLICABLE :: S2nCertSniMatch
-pattern S2N_CERT_SNI_MATCH_NOT_APPLICABLE = S2nCertSniMatch 0
+pattern S2nCertSniMatchNotApplicable :: S2nCertSniMatch
+pattern S2nCertSniMatchNotApplicable = S2nCertSniMatch 0
 
 -- | Certificate matches SNI.
-pattern S2N_CERT_SNI_MATCH :: S2nCertSniMatch
-pattern S2N_CERT_SNI_MATCH = S2nCertSniMatch 1
+pattern S2nCertSniMatched :: S2nCertSniMatch
+pattern S2nCertSniMatched = S2nCertSniMatch 1
 
 -- | No matching certificate found.
-pattern S2N_CERT_SNI_NO_MATCH_FOUND :: S2nCertSniMatch
-pattern S2N_CERT_SNI_NO_MATCH_FOUND = S2nCertSniMatch 2
+pattern S2nCertSniNoMatchFound :: S2nCertSniMatch
+pattern S2nCertSniNoMatchFound = S2nCertSniMatch 2
 
 -- | Peer key update request type.
 newtype S2nPeerKeyUpdate = S2nPeerKeyUpdate CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | Key update not requested.
-pattern S2N_KEY_UPDATE_NOT_REQUESTED :: S2nPeerKeyUpdate
-pattern S2N_KEY_UPDATE_NOT_REQUESTED = S2nPeerKeyUpdate 0
+pattern S2nKeyUpdateNotRequested :: S2nPeerKeyUpdate
+pattern S2nKeyUpdateNotRequested = S2nPeerKeyUpdate 0
 
 -- | Key update requested.
-pattern S2N_KEY_UPDATE_REQUESTED :: S2nPeerKeyUpdate
-pattern S2N_KEY_UPDATE_REQUESTED = S2nPeerKeyUpdate 1
+pattern S2nKeyUpdateRequested :: S2nPeerKeyUpdate
+pattern S2nKeyUpdateRequested = S2nPeerKeyUpdate 1
 
 -- | Verify-after-sign mode for signatures.
 newtype S2nVerifyAfterSign = S2nVerifyAfterSign CInt
   deriving (Eq, Ord, Show, Storable)
 
 -- | Verification after signing disabled.
-pattern S2N_VERIFY_AFTER_SIGN_DISABLED :: S2nVerifyAfterSign
-pattern S2N_VERIFY_AFTER_SIGN_DISABLED = S2nVerifyAfterSign 0
+pattern S2nVerifyAfterSignDisabled :: S2nVerifyAfterSign
+pattern S2nVerifyAfterSignDisabled = S2nVerifyAfterSign 0
 
 -- | Verification after signing enabled.
-pattern S2N_VERIFY_AFTER_SIGN_ENABLED :: S2nVerifyAfterSign
-pattern S2N_VERIFY_AFTER_SIGN_ENABLED = S2nVerifyAfterSign 1
+pattern S2nVerifyAfterSignEnabled :: S2nVerifyAfterSign
+pattern S2nVerifyAfterSignEnabled = S2nVerifyAfterSign 1
 
 --------------------------------------------------------------------------------
 -- Callback Types

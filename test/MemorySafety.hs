@@ -254,8 +254,8 @@ runConnectionTests :: S2nTlsFfi -> IO ()
 runConnectionTests ffi = do
     putStrLn "\n[Connection]"
     hFlush stdout
-    invoke "s2n_connection_new (client)" $ s2n_connection_new ffi S2N_CLIENT
-    invoke "s2n_connection_new (server)" $ s2n_connection_new ffi S2N_SERVER
+    invoke "s2n_connection_new (client)" $ s2n_connection_new ffi S2nClient
+    invoke "s2n_connection_new (server)" $ s2n_connection_new ffi S2nServer
 
     withConnection ffi $ \conn -> do
         putStrLn "\n[Connection Operations]"
@@ -294,7 +294,7 @@ runConnectionTests ffi = do
         invoke "s2n_connection_set_dynamic_buffers" $ s2n_connection_set_dynamic_buffers ffi conn 1
         invoke "s2n_connection_set_dynamic_record_threshold" $ s2n_connection_set_dynamic_record_threshold ffi conn 1400 100
         invoke "s2n_connection_set_verify_host_callback" $ s2n_connection_set_verify_host_callback ffi conn nullFunPtr nullPtr
-        invoke "s2n_connection_set_blinding" $ s2n_connection_set_blinding ffi conn S2N_SELF_SERVICE_BLINDING
+        invoke "s2n_connection_set_blinding" $ s2n_connection_set_blinding ffi conn S2nSelfServiceBlinding
         invoke "s2n_connection_get_delay" $ s2n_connection_get_delay ffi conn
         withCString "default_tls13" $ \policy ->
             invoke "s2n_connection_set_cipher_preferences" $ s2n_connection_set_cipher_preferences ffi conn policy
@@ -405,7 +405,7 @@ runConnectionTests ffi = do
         invoke "s2n_connection_wipe" $ s2n_connection_wipe ffi conn
 
     -- Test s2n_connection_free separately
-    result <- s2n_connection_new ffi S2N_CLIENT
+    result <- s2n_connection_new ffi S2nClient
     case result of
         Left _ -> pure ()
         Right conn -> invoke "s2n_connection_free" $ s2n_connection_free ffi conn
@@ -413,7 +413,7 @@ runConnectionTests ffi = do
 -- | Helper to run tests with a fresh connection
 withConnection :: S2nTlsFfi -> (Ptr S2nConnection -> IO ()) -> IO ()
 withConnection ffi action = do
-    result <- s2n_connection_new ffi S2N_CLIENT
+    result <- s2n_connection_new ffi S2nClient
     case result of
         Left _ -> putStrLn "  [skipped - connection creation failed]"
         Right conn -> do
@@ -435,7 +435,7 @@ runPskTests ffi = do
             invoke "s2n_psk_set_identity" $ s2n_psk_set_identity ffi psk identity 32
         allocaBytes 32 $ \secret ->
             invoke "s2n_psk_set_secret" $ s2n_psk_set_secret ffi psk secret 32
-        invoke "s2n_psk_set_hmac" $ s2n_psk_set_hmac ffi psk S2N_PSK_HMAC_SHA256
+        invoke "s2n_psk_set_hmac" $ s2n_psk_set_hmac ffi psk S2nPskHmacSha256
         invoke "s2n_psk_configure_early_data" $ s2n_psk_configure_early_data ffi psk 16384 33 34
         allocaBytes 10 $ \proto ->
             invoke "s2n_psk_set_application_protocol" $ s2n_psk_set_application_protocol ffi psk proto 10
@@ -444,7 +444,7 @@ runPskTests ffi = do
 
     -- Test s2n_connection_append_psk
     pskResult <- s2n_external_psk_new ffi
-    connResult <- s2n_connection_new ffi S2N_CLIENT
+    connResult <- s2n_connection_new ffi S2nClient
     case (pskResult, connResult) of
         (Right psk, Right conn) -> do
             invoke "s2n_connection_append_psk" $ s2n_connection_append_psk ffi conn psk
