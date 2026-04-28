@@ -13,6 +13,7 @@ license:            Apache-2.0
 license-file:       LICENSE
 author:             Daniel Goertzen
 maintainer:         daniel.goertzen@gmail.com
+copyright:          2026 Daniel Goertzen
 category:           Cryptography, FFI
 build-type:         Simple
 tested-with:        GHC == 9.8.2
@@ -27,6 +28,11 @@ source-repository head
     type:     git
     location: https://github.com/goertzenator/s2n-tls-ffi.git
 
+source-repository this
+    type:     git
+    location: https://github.com/goertzenator/s2n-tls-ffi.git
+    tag:      v0.1.0.0
+
 library
     exposed-modules:
         S2nTls.Ffi
@@ -34,7 +40,7 @@ library
 
     build-depends:
         base >= 4.14 && < 5
-      , unix >= 2.7
+      , unix >= 2.7 && < 2.9
 
     hs-source-dirs:   src
     default-language: GHC2021
