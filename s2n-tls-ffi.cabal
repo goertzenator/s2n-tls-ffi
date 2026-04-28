@@ -3,18 +3,14 @@ name:               s2n-tls-ffi
 version:            0.1.0.0
 synopsis:           Low-level FFI bindings to the s2n-tls library
 description:
-    This package provides low-level FFI bindings to the s2n-tls library.
-    It provides raw bindings which higher-level packages can build upon.
-    .
-    Use @withS2nTlsFfi@ with a @Library@ parameter to load symbols:
-    @Linked@ for compile-time linking, or @Dynamic path@ for runtime loading.
+    Low-level FFI bindings to the s2n-tls library.
 
 license:            Apache-2.0
 license-file:       LICENSE
 author:             Daniel Goertzen
 maintainer:         daniel.goertzen@gmail.com
 copyright:          2026 Daniel Goertzen
-category:           Cryptography, FFI
+category:           Cryptography, FFI, Network
 build-type:         Simple
 tested-with:        GHC == 9.8.2
 extra-doc-files:
