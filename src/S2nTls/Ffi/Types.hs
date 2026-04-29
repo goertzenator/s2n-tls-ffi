@@ -10,7 +10,7 @@ Stability   : experimental
 Portability : non-portable (requires s2n-tls C library)
 
 This module defines the core types used by the s2n-tls FFI bindings,
-including the t'S2nTlsFfi' record that contains all FFI function pointers.
+including the 'S2nTlsFfi' record that contains all FFI function pointers.
 -}
 module S2nTls.Ffi.Types (
   -- * Error Types
@@ -843,7 +843,7 @@ parameter specifying either 'S2nTls.Ffi.Linked' or 'S2nTls.Ffi.Dynamic' loading.
 data S2nTlsFfi = S2nTlsFfi
   { missingSymbols :: [String]
   -- ^ List of symbol names that couldn't be loaded.
-  -- Calling functions for these symbols will throw t'MissingSymbol'.
+  -- Calling functions for these symbols will throw 'MissingSymbol'.
   , s2n_init :: IO (Either S2nError CInt)
   -- ^ __Initialization & Cleanup__
   , s2n_cleanup :: IO (Either S2nError CInt)

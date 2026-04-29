@@ -4,13 +4,9 @@ Low-level FFI bindings to the [s2n-tls](https://github.com/aws/s2n-tls) library.
 
 This package provides raw FFI bindings which higher-level packages can build upon.
 
-## Loading the Library
+### Using a Linked s2n-tls Library
 
-Use `withS2nTlsFfi` with a `Library` parameter to load the s2n-tls symbols:
-
-### Linked
-
-Use `Linked` when s2n-tls is linked into your executable at compile time. This uses `dlopen(NULL)` to resolve symbols from the running process.
+Call `withS2nTlsFfi` with `Linked` to use the linked-in s2n-tls library.
 
 ```haskell
 import S2nTls.Ffi
@@ -20,9 +16,9 @@ main = withS2nTlsFfi Linked $ \ffi -> do
     -- use ffi...
 ```
 
-### Dynamic
+### Using a Dynamically Loaded s2n-tls library
 
-Use `Dynamic path` to load s2n-tls at runtime via `dlopen`. This enables runtime selection of different library builds - for example, switching between FIPS and non-FIPS crypto backends without recompiling your application.
+Call `withS2nTlsFfi` with `Dynamic path` to load s2n-tls at runtime. This enables runtime selection of different library builds - for example, switching between FIPS and non-FIPS crypto backends without recompiling your application.
 
 ```haskell
 import S2nTls.Ffi

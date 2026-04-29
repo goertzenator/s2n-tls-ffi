@@ -11,7 +11,7 @@ Portability : non-portable (requires s2n-tls C library)
 
 This module provides low-level FFI bindings to the s2n-tls library.
 
-The core type is t'S2nTlsFfi', a record containing all FFI function
+The core type is 'S2nTlsFfi', a record containing all FFI function
 pointers. Use 'withS2nTlsFfi' with a 'Library' to obtain one:
 
 * 'Linked': For executables that link s2n-tls at compile time.
@@ -25,7 +25,7 @@ C wrappers are used to safely capture error information
 avoiding thread-local storage issues in Haskell FFI.
 
 Symbol loading is forgiving - missing symbols don't cause failure
-at load time. Instead, calling a missing symbol throws t'MissingSymbol'.
+at load time. Instead, calling a missing symbol throws 'MissingSymbol'.
 Check the 'missingSymbols' field to see which symbols weren't found.
 
 = Memory Locking (mlock)
@@ -193,7 +193,7 @@ const6 x _ _ _ _ _ _ = x
 const7 :: a -> b -> c -> d -> e -> f -> g -> h -> a
 const7 x _ _ _ _ _ _ _ = x
 
-{- | Load the s2n-tls library and provide a t'S2nTlsFfi' record to the
+{- | Load the s2n-tls library and provide a 'S2nTlsFfi' record to the
 given callback. The library is automatically unloaded when the callback
 returns (or throws an exception).
 
@@ -212,7 +212,7 @@ withS2nTlsFfi (Dynamic "libs2n.so") $ \\ffi -> do
 withS2nTlsFfi ::
     -- | How to load the library
     Library ->
-    -- | Callback that receives the populated t'S2nTlsFfi' record
+    -- | Callback that receives the populated 'S2nTlsFfi' record
     (S2nTlsFfi -> IO a) ->
     IO a
 withS2nTlsFfi lib action =
