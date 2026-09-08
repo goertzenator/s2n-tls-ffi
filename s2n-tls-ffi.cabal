@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               s2n-tls-ffi
-version:            0.1.0.0
+version:            0.2.0.0
 synopsis:           Low-level FFI bindings to the s2n-tls library
 description:
     Low-level FFI bindings to the s2n-tls library.
@@ -12,7 +12,7 @@ maintainer:         daniel.goertzen@gmail.com
 copyright:          2026 Daniel Goertzen
 category:           Cryptography, FFI, Network
 build-type:         Simple
-tested-with:        GHC == 9.8.2
+tested-with:        GHC == 9.12.2
 extra-doc-files:
     CHANGELOG.md
     README.md
@@ -27,7 +27,7 @@ source-repository head
 source-repository this
     type:     git
     location: https://github.com/goertzenator/s2n-tls-ffi.git
-    tag:      v0.1.0.0
+    tag:      v0.2.0.0
 
 library
     exposed-modules:
