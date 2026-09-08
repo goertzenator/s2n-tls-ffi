@@ -112,7 +112,7 @@ module S2nTls.Ffi (
     S2nErrorFuncs (..),
 ) where
 
-import Control.Exception (Exception, bracket, throwIO)
+import Control.Exception (Exception, IOException, bracket, catch, throwIO)
 import Control.Monad (when)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Word (Word16, Word32, Word64, Word8)
@@ -235,13 +235,33 @@ libraryPath (Dynamic path) = path
 openLib :: FilePath -> IO DL
 openLib path = dlopen path [RTLD_LAZY, RTLD_LOCAL]
 
--- | Load the error functions (required for meaningful error reporting)
+{- | Look up a symbol, yielding 'nullFunPtr' when it is absent.
+
+'dlsym' signals a missing symbol by throwing an untyped 'IOError' rather than
+returning 'nullFunPtr', so every caller that wants to tolerate a missing symbol
+has to recover it explicitly.
+-}
+dlsymMaybe :: DL -> String -> IO (FunPtr a)
+dlsymMaybe dl name = dlsym dl name `catch` \(_ :: IOException) -> pure nullFunPtr
+
+{- | Load the error functions (required for meaningful error reporting).
+
+Every wrapper calls through these unconditionally -- 's2n_send' and 's2n_recv'
+do so even on the success path -- so a null here would be an immediate segfault
+inside C. Fail at load time with a typed 'RequiredSymbolNotFound' instead.
+-}
 loadErrorFuncs :: DL -> IO S2nErrorFuncs
-loadErrorFuncs dl = do
-    el <- dlsym dl "s2n_errno_location"
-    sd <- dlsym dl "s2n_strerror_debug"
-    et <- dlsym dl "s2n_error_get_type"
-    pure $ S2nErrorFuncs el sd et
+loadErrorFuncs dl =
+    S2nErrorFuncs
+        <$> loadRequired "s2n_errno_location"
+        <*> loadRequired "s2n_strerror_debug"
+        <*> loadRequired "s2n_error_get_type"
+  where
+    loadRequired :: String -> IO (FunPtr a)
+    loadRequired name = do
+        ptr <- dlsymMaybe dl name
+        when (ptr == nullFunPtr) $ throwIO (RequiredSymbolNotFound name)
+        pure ptr
 
 -- | Create a closure that throws MissingSymbol
 throwMissing :: String -> IO a
@@ -262,7 +282,7 @@ loadSymbols dl errFuncsPtr = do
         -- Helper to load a symbol with forgiving behavior
         load :: String -> MethodRequirement -> IO (FunPtr a)
         load name req = do
-            ptr <- dlsym dl name
+            ptr <- dlsymMaybe dl name
             when (ptr == nullFunPtr) $ do
                 modifyIORef' missingRef (name :)
             if ptr == nullFunPtr && req == Mandatory
@@ -784,7 +804,7 @@ foreign import ccall safe "s2n_wrap_client_hello_get_extensions_length" c_wrap_c
 foreign import ccall safe "s2n_wrap_client_hello_get_extensions" c_wrap_client_hello_get_extensions :: FunPtr () -> Ptr S2nClientHello -> Ptr Word8 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CSsize
 foreign import ccall safe "s2n_wrap_client_hello_get_extension_length" c_wrap_client_hello_get_extension_length :: FunPtr () -> Ptr S2nClientHello -> S2nTlsExtensionType -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CSsize
 foreign import ccall safe "s2n_wrap_client_hello_get_extension_by_id" c_wrap_client_hello_get_extension_by_id :: FunPtr () -> Ptr S2nClientHello -> S2nTlsExtensionType -> Ptr Word8 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CSsize
-foreign import ccall safe "s2n_wrap_client_hello_has_extension" c_wrap_client_hello_has_extension :: FunPtr () -> Ptr S2nClientHello -> Word16 -> Ptr CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall safe "s2n_wrap_client_hello_has_extension" c_wrap_client_hello_has_extension :: FunPtr () -> Ptr S2nClientHello -> Word16 -> Ptr CBool -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
 foreign import ccall safe "s2n_wrap_client_hello_get_session_id_length" c_wrap_client_hello_get_session_id_length :: FunPtr () -> Ptr S2nClientHello -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
 foreign import ccall safe "s2n_wrap_client_hello_get_session_id" c_wrap_client_hello_get_session_id :: FunPtr () -> Ptr S2nClientHello -> Ptr Word8 -> Ptr Word32 -> Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
 foreign import ccall safe "s2n_wrap_client_hello_get_compression_methods_length" c_wrap_client_hello_get_compression_methods_length :: FunPtr () -> Ptr S2nClientHello -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
@@ -857,7 +877,7 @@ foreign import ccall safe "s2n_wrap_cert_chain_get_cert" c_wrap_cert_chain_get_c
 foreign import ccall safe "s2n_wrap_cert_get_der" c_wrap_cert_get_der :: FunPtr () -> Ptr S2nCert -> Ptr (Ptr Word8) -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
 foreign import ccall safe "s2n_wrap_connection_get_peer_cert_chain" c_wrap_connection_get_peer_cert_chain :: FunPtr () -> Ptr S2nConnection -> Ptr S2nCertChainAndKey -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
 foreign import ccall safe "s2n_wrap_cert_get_x509_extension_value_length" c_wrap_cert_get_x509_extension_value_length :: FunPtr () -> Ptr S2nCert -> Ptr Word8 -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
-foreign import ccall safe "s2n_wrap_cert_get_x509_extension_value" c_wrap_cert_get_x509_extension_value :: FunPtr () -> Ptr S2nCert -> Ptr Word8 -> Ptr Word8 -> Ptr Word32 -> Ptr CInt -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
+foreign import ccall safe "s2n_wrap_cert_get_x509_extension_value" c_wrap_cert_get_x509_extension_value :: FunPtr () -> Ptr S2nCert -> Ptr Word8 -> Ptr Word8 -> Ptr Word32 -> Ptr CBool -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
 foreign import ccall safe "s2n_wrap_cert_get_utf8_string_from_extension_data_length" c_wrap_cert_get_utf8_string_from_extension_data_length :: FunPtr () -> Ptr Word8 -> Word32 -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
 foreign import ccall safe "s2n_wrap_cert_get_utf8_string_from_extension_data" c_wrap_cert_get_utf8_string_from_extension_data :: FunPtr () -> Ptr Word8 -> Word32 -> Ptr Word8 -> Ptr Word32 -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO CInt
 foreign import ccall safe "s2n_wrap_external_psk_new" c_wrap_external_psk_new :: FunPtr () -> Ptr S2nErrorFuncs -> Ptr S2nError -> IO (Ptr S2nPsk)

@@ -602,8 +602,8 @@ ssize_t s2n_wrap_client_hello_get_extension_by_id(
     const S2nErrorFuncs *err_funcs, S2nErrorInfo *err_out);
 
 int s2n_wrap_client_hello_has_extension(
-    int (*fn)(void *, uint16_t, int *),
-    void *client_hello, uint16_t extension_iana, int *exists,
+    int (*fn)(void *, uint16_t, bool *),
+    void *client_hello, uint16_t extension_iana, bool *exists,
     const S2nErrorFuncs *err_funcs, S2nErrorInfo *err_out);
 
 int s2n_wrap_client_hello_get_session_id_length(
@@ -985,8 +985,8 @@ int s2n_wrap_cert_get_x509_extension_value_length(
     const S2nErrorFuncs *err_funcs, S2nErrorInfo *err_out);
 
 int s2n_wrap_cert_get_x509_extension_value(
-    int (*fn)(void *, const uint8_t *, uint8_t *, uint32_t *, int *),
-    void *cert, const uint8_t *oid, uint8_t *value, uint32_t *length, int *critical,
+    int (*fn)(void *, const uint8_t *, uint8_t *, uint32_t *, bool *),
+    void *cert, const uint8_t *oid, uint8_t *value, uint32_t *length, bool *critical,
     const S2nErrorFuncs *err_funcs, S2nErrorInfo *err_out);
 
 int s2n_wrap_cert_get_utf8_string_from_extension_data_length(

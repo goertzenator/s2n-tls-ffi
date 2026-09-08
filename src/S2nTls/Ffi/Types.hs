@@ -790,7 +790,7 @@ type S2nMemInitCallback = FunPtr (IO CInt)
 type S2nMemCleanupCallback = FunPtr (IO CInt)
 
 -- | Memory allocation callback.
-type S2nMemMallocCallback = FunPtr (Ptr (Ptr ()) -> Word32 -> Word32 -> IO CInt)
+type S2nMemMallocCallback = FunPtr (Ptr (Ptr ()) -> Word32 -> Ptr Word32 -> IO CInt)
 
 -- | Memory free callback.
 type S2nMemFreeCallback = FunPtr (Ptr () -> Word32 -> IO CInt)
@@ -811,7 +811,7 @@ type S2nRandMixCallback = FunPtr (Ptr () -> Word32 -> IO CInt)
 type S2nClientHelloFn = FunPtr (Ptr S2nConnection -> Ptr () -> IO CInt)
 
 -- | Certificate tiebreak callback.
-type S2nCertTiebreakCallback = FunPtr (Ptr S2nCertChainAndKey -> Ptr S2nCertChainAndKey -> Word8 -> Ptr (Ptr S2nCertChainAndKey) -> IO CInt)
+type S2nCertTiebreakCallback = FunPtr (Ptr S2nCertChainAndKey -> Ptr S2nCertChainAndKey -> Ptr Word8 -> Word32 -> IO (Ptr S2nCertChainAndKey))
 
 -- | Verify host callback.
 type S2nVerifyHostFn = FunPtr (CString -> CSize -> Ptr () -> IO Word8)
@@ -972,7 +972,7 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_client_hello_get_extensions :: Ptr S2nClientHello -> Ptr Word8 -> Word32 -> IO (Either S2nError CSsize)
   , s2n_client_hello_get_extension_length :: Ptr S2nClientHello -> S2nTlsExtensionType -> IO (Either S2nError CSsize)
   , s2n_client_hello_get_extension_by_id :: Ptr S2nClientHello -> S2nTlsExtensionType -> Ptr Word8 -> Word32 -> IO (Either S2nError CSsize)
-  , s2n_client_hello_has_extension :: Ptr S2nClientHello -> Word16 -> Ptr CInt -> IO (Either S2nError CInt)
+  , s2n_client_hello_has_extension :: Ptr S2nClientHello -> Word16 -> Ptr CBool -> IO (Either S2nError CInt)
   , s2n_client_hello_get_session_id_length :: Ptr S2nClientHello -> Ptr Word32 -> IO (Either S2nError CInt)
   , s2n_client_hello_get_session_id :: Ptr S2nClientHello -> Ptr Word8 -> Ptr Word32 -> Word32 -> IO (Either S2nError CInt)
   , s2n_client_hello_get_compression_methods_length :: Ptr S2nClientHello -> Ptr Word32 -> IO (Either S2nError CInt)
@@ -1062,7 +1062,7 @@ data S2nTlsFfi = S2nTlsFfi
   , s2n_cert_get_der :: Ptr S2nCert -> Ptr (Ptr Word8) -> Ptr Word32 -> IO (Either S2nError CInt)
   , s2n_connection_get_peer_cert_chain :: Ptr S2nConnection -> Ptr S2nCertChainAndKey -> IO (Either S2nError CInt)
   , s2n_cert_get_x509_extension_value_length :: Ptr S2nCert -> Ptr Word8 -> Ptr Word32 -> IO (Either S2nError CInt)
-  , s2n_cert_get_x509_extension_value :: Ptr S2nCert -> Ptr Word8 -> Ptr Word8 -> Ptr Word32 -> Ptr CInt -> IO (Either S2nError CInt)
+  , s2n_cert_get_x509_extension_value :: Ptr S2nCert -> Ptr Word8 -> Ptr Word8 -> Ptr Word32 -> Ptr CBool -> IO (Either S2nError CInt)
   , s2n_cert_get_utf8_string_from_extension_data_length :: Ptr Word8 -> Word32 -> Ptr Word32 -> IO (Either S2nError CInt)
   , s2n_cert_get_utf8_string_from_extension_data :: Ptr Word8 -> Word32 -> Ptr Word8 -> Ptr Word32 -> IO (Either S2nError CInt)
   , s2n_external_psk_new :: IO (Either S2nError (Ptr S2nPsk))
